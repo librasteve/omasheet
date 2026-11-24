@@ -123,3 +123,41 @@ sheet Chance
 | pick(8) deals each     | = Numbers.Odd.pick(8).sum()            |
 | a shuffle keeps the 15 | = Numbers.Odd.pick(8).max()            |
 | a die is 1 to 6        | = (1..6).roll() >= 1 and (1..6).roll() <= 6 |
+
+sheet Symbols
+
+| Greek | Zodiac |
+| ----- | ------ |
+| *     | *      |
+| *     | *      |
+| *     | *      |
+| *     | *      |
+| *     | *      |
+| *     | *      |
+| *     | *      |
+| *     | *      |
+| *     | *      |
+| *     | *      |
+| *     | *      |
+| *     | *      |
+| *     | *      |
+| *     | *      |
+| *     | *      |
+| *     | *      |
+| *     | *      |
+| *     | *      |
+| *     | *      |
+| *     | *      |
+| *     | *      |
+| *     | *      |
+| *     | *      |
+| *     | *      |
+| *     | *      |
+
+// Letters beyond ASCII go on in Unicode's order, so the Greek alphabet runs
+// from alpha to omega, leaving out the final sigma; the rows after it are empty.
+Greek  := 'α' ... 'ω'
+
+// So do signs: the twelve of the zodiac are side by side. The selector that
+// asks for the coloured emoji stays on each.
+Zodiac := '♈️' ... '♓️'

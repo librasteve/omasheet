@@ -2059,6 +2059,18 @@ fn plot_control_ok(key: &str, value: &str) -> Result<(), String> {
     if value.is_empty() || value.contains('\n') {
         return Err(format!("`{key}` is one line"));
     }
+    if omasheet_omx::file::PLOT_FLAGS.contains(&key) && value != "true" && value != "false" {
+        return Err(format!("`{key}` is `true` or `false`"));
+    }
+    if key == "palette" && !omasheet_omx::file::PLOT_PALETTES.contains(&value) {
+        return Err(format!("`palette` is {}", omasheet_omx::file::PLOT_PALETTES.join(", ")));
+    }
+    if key == "fit" && omasheet_omx::file::fit_kind(value).is_none() {
+        return Err(format!("`fit` is {}", omasheet_omx::file::PLOT_FITS));
+    }
+    if omasheet_omx::file::PLOT_AXIS_FLAGS.contains(&key) && omasheet_omx::file::axis_flag(value).is_none() {
+        return Err(format!("`{key}` is `x`, `y`, `both` or `false`"));
+    }
     if key == "type" && !PLOT_KINDS.split(", ").any(|k| k == value) {
         return Err(format!("`{value}` is not a kind of plot: the types are {PLOT_KINDS}"));
     }
@@ -5602,6 +5614,28 @@ impl Document {
         let program = engine.program();
         crate::plot::find(program, name)
             .map(|p| crate::plot::columns(engine, program, p))
+            .unwrap_or_default()
+    }
+
+    /// Which of those columns hold numbers, for a plot's values.
+    pub fn plot_numeric_columns(&self, name: &str) -> Vec<String> {
+        let Some(engine) = self.engine.as_ref() else {
+            return Vec::new();
+        };
+        let program = engine.program();
+        crate::plot::find(program, name)
+            .map(|p| crate::plot::numeric_columns(engine, program, p))
+            .unwrap_or_default()
+    }
+
+    /// Whether the origin is in view of itself along `x` and `y` for plot `name`.
+    pub fn plot_origin_in(&self, name: &str) -> (bool, bool) {
+        let Some(engine) = self.engine.as_ref() else {
+            return (false, false);
+        };
+        let program = engine.program();
+        crate::plot::find(program, name)
+            .map(|p| crate::plot::origin_in(engine, program, p))
             .unwrap_or_default()
     }
 

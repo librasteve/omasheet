@@ -2117,8 +2117,13 @@ impl<'p> Engine<'p> {
                 })) => Some(u.clone()),
                 _ => crate::quantity::column_unit(id),
             };
-            return crate::quantity::dress(lit_value(l, col.ty), id, unit.as_ref())
-                .unwrap_or(Value::Error);
+            let sub = matches!(&col.format, Some(Format::Quantity(q)) if q.number.is_some_and(|n| n.sub.is_some()));
+            let v = lit_value(l, col.ty);
+            let v = match (sub, &v) {
+                (true, Value::Float(x)) => Value::Float(x * 0.01),
+                _ => v,
+            };
+            return crate::quantity::dress(v, id, unit.as_ref()).unwrap_or(Value::Error);
         }
         lit_value(l, col.ty)
     }
@@ -5886,6 +5891,30 @@ fn scalar_op(op: BinOp, a: &Value, b: &Value) -> Result<Value, String> {
 /// left, and widening when it runs off the end.
 pub fn succ_text(s: &str) -> String {
     let chars: Vec<char> = s.chars().collect();
+    // Text that ends in a letter or a sign beyond ASCII, as `α` or `♈`, goes on
+    // by one place in Unicode's order: the signs of the zodiac and the letters
+    // of the Greek alphabet are in runs, and the final sigma `ς` is left out.
+    // A sign may end in a variation selector, `♈️` is `♈` and U+FE0F: the sign
+    // is the one that goes on, and the selector stays.
+    let base = chars
+        .iter()
+        .rposition(|&c| !matches!(c, '\u{FE0E}' | '\u{FE0F}'))
+        .unwrap_or(0);
+    if let Some(&last) = chars.get(base)
+        && !last.is_ascii()
+        && !last.is_whitespace()
+    {
+        let next = match last {
+            'ρ' => 'σ',
+            'Ρ' => 'Σ',
+            c => char::from_u32(c as u32 + 1)
+                .or_else(|| char::from_u32(0xE000))
+                .unwrap_or(c),
+        };
+        let mut out = chars;
+        out[base] = next;
+        return out.into_iter().collect();
+    }
     let Some(end) = chars.iter().rposition(char::is_ascii_alphanumeric) else {
         return format!("{s}1");
     };
@@ -6136,4 +6165,18 @@ fn group_lookup(body: &Node, o: usize) -> Option<Vec<(usize, usize)>> {
     let mut on = Vec::new();
     walk(body, o, &mut on)?;
     (!on.is_empty()).then_some(on)
+}
+
+#[cfg(test)]
+mod succ_text_tests {
+    use super::succ_text;
+
+    #[test]
+    fn signs_beyond_ascii_go_on_in_unicode_order() {
+        assert_eq!(succ_text("α"), "β");
+        assert_eq!(succ_text("ρ"), "σ");
+        assert_eq!(succ_text("♈"), "♉");
+        // The selector that asks for the emoji stays where it is.
+        assert_eq!(succ_text("♈\u{FE0F}"), "♉\u{FE0F}");
+    }
 }

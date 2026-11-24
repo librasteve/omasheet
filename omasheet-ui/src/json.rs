@@ -23,7 +23,13 @@ pub fn string(out: &mut String, s: &str) {
 
 /// What the pane needs of a plot: its controls as written, and the names
 /// of the columns of its data.
-pub fn plot_info(controls: &[(String, String)], columns: &[String], fit: &[(String, String)]) -> String {
+pub fn plot_info(
+    controls: &[(String, String)],
+    columns: &[String],
+    numeric: &[String],
+    fit: &[(String, String)],
+    origin_in: (bool, bool),
+) -> String {
     let mut out = String::from("{\"controls\":{");
     for (i, (key, value)) in controls.iter().enumerate() {
         if i > 0 {
@@ -33,6 +39,8 @@ pub fn plot_info(controls: &[(String, String)], columns: &[String], fit: &[(Stri
     }
     out.push_str("},\"columns\":");
     out.push_str(&strings(columns));
+    out.push_str(",\"numeric\":");
+    out.push_str(&strings(numeric));
     out.push_str(",\"fit\":{");
     for (i, (kind, why)) in fit.iter().enumerate() {
         if i > 0 {
@@ -40,7 +48,18 @@ pub fn plot_info(controls: &[(String, String)], columns: &[String], fit: &[(Stri
         }
         field(&mut out, kind, why);
     }
-    out.push_str("}}");
+    out.push_str(&format!("}},\"originIn\":{{\"x\":{},\"y\":{}}},\"palettes\":[", origin_in.0, origin_in.1));
+    for (i, (name, colours)) in omasheet_engine::plot::palettes().iter().enumerate() {
+        if i > 0 {
+            out.push(',');
+        }
+        out.push_str("{\"name\":");
+        string(&mut out, name);
+        out.push_str(",\"colours\":");
+        out.push_str(&strings(colours));
+        out.push('}');
+    }
+    out.push_str("]}");
     out
 }
 

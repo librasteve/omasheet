@@ -101,6 +101,54 @@ pub struct Spec {
     pub k: f64,
     /// For a histogram: how many bins (by default from the number of values).
     pub bins: Option<usize>,
+    /// Each value written at its mark, beyond its error bar: of `x`, of `y`
+    /// or both.
+    pub labels: Axes,
+    /// Tick marks on an axis, and the axis drawn along its edge.
+    pub ticks: Axes,
+    /// Logarithmic axes: where they apply (a line, step, scatter or bubble
+    /// plot for `y`, and numeric `x` for `x`), and a value that is not above
+    /// zero is left out.
+    pub logx: bool,
+    pub logy: bool,
+    /// A least-squares line through each series, in the axes as drawn: with
+    /// log axes it is a power law or an exponential.
+    pub fit: Fit,
+    /// The unit of each column, at its axis (and, for `y`, in the legend).
+    pub units: Axes,
+    /// Axes that reach zero, whatever the values are (but not on a log axis).
+    pub origin: Axes,
+    /// Whether to draw the legend; where it is left to the plot, one for
+    /// several columns of values.
+    pub legend: Option<bool>,
+    /// The name of a palette, or none for the first.
+    pub palette: String,
+}
+
+/// A curve fitted to the values of each series.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub enum Fit {
+    #[default]
+    None,
+    /// The least-squares line.
+    Straight,
+    /// The least-squares parabola.
+    Quadratic,
+    /// A smooth curve through the points, a cubic Bézier between each pair.
+    Bezier,
+}
+
+/// Which axes a setting is for.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Axes {
+    pub x: bool,
+    pub y: bool,
+}
+
+impl From<(bool, bool)> for Axes {
+    fn from((x, y): (bool, bool)) -> Axes {
+        Axes { x, y }
+    }
 }
 
 impl Spec {
@@ -112,6 +160,15 @@ impl Spec {
             height: 360,
             k: 1.0,
             bins: None,
+            labels: Axes::default(),
+            ticks: Axes::default(),
+            logx: false,
+            logy: false,
+            fit: Fit::None,
+            units: Axes::default(),
+            origin: Axes::default(),
+            legend: None,
+            palette: String::new(),
         }
     }
 }
@@ -123,6 +180,11 @@ pub struct Series {
     pub name: String,
     pub values: Vec<Option<f64>>,
     pub sigma: Vec<f64>,
+    /// The unit of the values, where the column has one.
+    pub unit: Option<String>,
+    /// Each value as its column shows it, for a data label; empty where
+    /// they are not known.
+    pub shown: Vec<String>,
 }
 
 /// What is plotted: a label for each row, and the columns of values.
@@ -133,26 +195,47 @@ pub struct Table {
     /// The labels as numbers, where every one is: a scatter or a bubble plot
     /// needs them, and a line or area is drawn at them.
     pub xs: Option<Vec<Option<f64>>>,
+    /// The unit of `xs`.
+    pub x_unit: Option<String>,
 }
 
-const PALETTE: [(u8, u8, u8); 8] = [
-    (0x4E, 0x79, 0xA7),
-    (0xF2, 0x8E, 0x2B),
-    (0x59, 0xA1, 0x4F),
-    (0xE1, 0x57, 0x59),
-    (0x76, 0xB7, 0xB2),
-    (0xB0, 0x7A, 0xA1),
-    (0xED, 0xC9, 0x48),
-    (0x9C, 0x75, 0x5F),
+/// The palettes a plot may be drawn in: a name and eight colours, the first
+/// of which is the major one. The first is the default.
+const PALETTES: [(&str, [u32; 8]); 7] = [
+    ("classic", [0x4E79A7, 0xF28E2B, 0x59A14F, 0xE15759, 0x76B7B2, 0xB07AA1, 0xEDC948, 0x9C755F]),
+    ("vivid", [0x1F77FF, 0xFF7F0E, 0x2CC25A, 0xE8263D, 0x9B4DFF, 0x00C2D1, 0xFFD500, 0xFF4FA3]),
+    ("pastel", [0x8DB6E2, 0xF7B77E, 0xA3D49A, 0xF1A0A1, 0xB7DCD9, 0xD9B8D2, 0xF3E19A, 0xC9B3A4]),
+    ("earth", [0x8C5A2B, 0x5E7D3A, 0xC9892F, 0x9E3D2F, 0x4F6D7A, 0xB7A27B, 0x6B4A5A, 0x3E5641]),
+    ("cool", [0x2B6CB0, 0x2C9AB7, 0x3B5BA5, 0x4DB6AC, 0x7E57C2, 0x5C8FD6, 0x26A69A, 0x1B3F73]),
+    ("warm", [0xD9480F, 0xF08C00, 0xC92A2A, 0xE8590C, 0xF4B400, 0xA61E4D, 0xD6336C, 0x8A3B12]),
+    ("mono", [0x37474F, 0x78909C, 0x546E7A, 0xB0BEC5, 0x263238, 0x90A4AE, 0x607D8B, 0xCFD8DC]),
 ];
 
+/// The names of the palettes and their colours as `#rrggbb`.
+pub fn palettes() -> Vec<(&'static str, Vec<String>)> {
+    PALETTES
+        .iter()
+        .map(|(name, colours)| (*name, colours.iter().map(|c| format!("#{c:06x}")).collect()))
+        .collect()
+}
+
+thread_local! {
+    /// The palette the plot being drawn uses.
+    static CURRENT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+fn pick(i: usize) -> (u8, u8, u8) {
+    let c = CURRENT.with(|p| PALETTES[p.get()].1)[i % 8];
+    ((c >> 16) as u8, (c >> 8) as u8, c as u8)
+}
+
 fn colour(i: usize) -> RGBColor {
-    let (r, g, b) = PALETTE[i % PALETTE.len()];
+    let (r, g, b) = pick(i);
     RGBColor(r, g, b)
 }
 
 fn hex(i: usize) -> String {
-    let (r, g, b) = PALETTE[i % PALETTE.len()];
+    let (r, g, b) = pick(i);
     format!("#{r:02x}{g:02x}{b:02x}")
 }
 
@@ -191,6 +274,67 @@ fn nice_ticks(lo: f64, hi: f64, n: usize) -> (Vec<f64>, f64) {
     ((first..=last).map(|i| i as f64 * step).collect(), step)
 }
 
+/// Where the labels of an axis go, and what they say. A logarithmic axis is
+/// in the logarithms of its values: a label at each power of ten, and at 2
+/// and 5 of each where it spans fewer than three.
+fn axis_ticks(lo: f64, hi: f64, n: usize, log: bool) -> Vec<(f64, String)> {
+    if !log {
+        let (ticks, step) = nice_ticks(lo, hi, n);
+        return ticks.into_iter().map(|v| (v, tick_text(v, step))).collect();
+    }
+    let every = (((hi - lo) / 8.0).ceil() as i32).max(1);
+    let mantissas: &[f64] = if hi - lo < 3.0 { &[1.0, 2.0, 5.0] } else { &[1.0] };
+    let mut out = Vec::new();
+    for k in (lo.floor() as i32)..=(hi.ceil() as i32) {
+        if k.rem_euclid(every) != 0 {
+            continue;
+        }
+        let base = 10f64.powi(k);
+        for m in mantissas {
+            let at = (m * base).log10();
+            if at >= lo - 1e-9 && at <= hi + 1e-9 {
+                out.push((at, tick_text(m * base, base.min(1.0))));
+            }
+        }
+    }
+    out
+}
+
+/// The table with the logarithms of what a log axis is drawn from, and
+/// whether each axis is one. A value that is not above zero has none.
+fn log_table(spec: &Spec, table: &Table) -> (Table, bool, bool) {
+    let kind = spec.kind;
+    let logy = spec.logy && matches!(kind, Kind::Line | Kind::Step | Kind::Scatter | Kind::Bubble);
+    let logx = spec.logx
+        && table.xs.is_some()
+        && matches!(kind, Kind::Line | Kind::Step | Kind::Scatter | Kind::Bubble | Kind::Area);
+    let mut t = table.clone();
+    if logy {
+        for (i, s) in t.series.iter_mut().enumerate() {
+            // A bubble's second column is a size, not a height.
+            if kind == Kind::Bubble && i > 0 {
+                continue;
+            }
+            for v in s.values.iter_mut() {
+                *v = v.filter(|x| *x > 0.0).map(f64::log10);
+            }
+            s.sigma.iter_mut().for_each(|x| *x = 0.0);
+        }
+    }
+    if logx && let Some(xs) = t.xs.as_mut() {
+        for x in xs.iter_mut() {
+            *x = x.filter(|v| *v > 0.0).map(f64::log10);
+        }
+    }
+    (t, logx, logy)
+}
+
+/// The unit the series share, where they all have one.
+fn common_unit(series: &[Series]) -> Option<String> {
+    let first = series.first()?.unit.clone()?;
+    series.iter().all(|s| s.unit.as_ref() == Some(&first)).then_some(first)
+}
+
 type Chart<'a> = ChartContext<'a, SVGBackend<'a>, Cartesian2d<RangedCoordf64, RangedCoordf64>>;
 
 /// The SVG of a plot, or why there is none.
@@ -206,6 +350,7 @@ pub fn render_hits(spec: &Spec, table: &Table) -> Result<(String, Vec<Hit>), Str
     if table.series.is_empty() {
         return Err("there is no column of values to plot".to_string());
     }
+    CURRENT.with(|p| p.set(PALETTES.iter().position(|(n, _)| *n == spec.palette).unwrap_or(0)));
     let (w, h) = (spec.width.max(120), spec.height.max(90));
     let mut buf = String::new();
     let mut text = String::new();
@@ -217,7 +362,9 @@ pub fn render_hits(spec: &Spec, table: &Table) -> Result<(String, Vec<Hit>), Str
             Kind::Donut => pie(spec, table, 0.55, &mut text)?,
             Kind::Heatmap => heatmap(spec, table, &mut text, &mut hits)?,
             _ => {
-                let prep = prepare(spec, table)?;
+                let (table, logx, logy) = log_table(spec, table);
+                let mut prep = prepare(spec, &table)?;
+                (prep.logx, prep.logy) = (logx, logy);
                 cartesian(spec, &prep, &root, &mut text, &mut hits)?;
             }
         }
@@ -288,6 +435,9 @@ struct Prep {
     bars: Vec<(f64, f64)>,
     /// A line in the corner, about what is drawn.
     note: Option<String>,
+    /// The axes are logarithmic: the values are already their logarithms.
+    logx: bool,
+    logy: bool,
 }
 
 fn quantile(sorted: &[f64], p: f64) -> f64 {
@@ -303,6 +453,8 @@ fn prepare(spec: &Spec, table: &Table) -> Result<Prep, String> {
         boxes: Vec::new(),
         bars: Vec::new(),
         note: None,
+        logx: false,
+        logy: false,
     };
     let numbers = |s: &Series| -> Vec<f64> {
         s.values
@@ -357,6 +509,8 @@ fn prepare(spec: &Spec, table: &Table) -> Result<Prep, String> {
                     name: s.name.clone(),
                     values: counts.into_iter().map(Some).collect(),
                     sigma: vec![0.0; bins],
+                    unit: None,
+                    shown: Vec::new(),
                 });
             }
             prep.table = Table {
@@ -365,6 +519,7 @@ fn prepare(spec: &Spec, table: &Table) -> Result<Prep, String> {
                     .collect(),
                 series,
                 xs: None,
+                x_unit: None,
             };
             prep.note = Some(format!("{n} values, {bins} bins of {}", tick_text(width, width / 10.0)));
         }
@@ -388,7 +543,7 @@ fn prepare(spec: &Spec, table: &Table) -> Result<Prep, String> {
             if prep.boxes.is_empty() {
                 return Err("there are no numbers to plot".to_string());
             }
-            prep.table = Table { labels, series: Vec::new(), xs: None };
+            prep.table = Table { labels, series: Vec::new(), xs: None, x_unit: None };
             prep.note = Some("box: quartiles, whiskers to 1.5 × the range".to_string());
         }
         Kind::Waterfall => {
@@ -409,8 +564,11 @@ fn prepare(spec: &Spec, table: &Table) -> Result<Prep, String> {
                     name: s.name.clone(),
                     values: prep.bars.iter().map(|b| Some(b.1)).collect(),
                     sigma: vec![0.0; n],
+                    unit: s.unit.clone(),
+                    shown: Vec::new(),
                 }],
                 xs: None,
+                x_unit: None,
             };
         }
         _ => {}
@@ -494,7 +652,7 @@ fn cartesian(
     if !lo.is_finite() {
         return Err("there are no numbers to plot".to_string());
     }
-    if zero {
+    if zero || (spec.origin.y && !prep.logy) {
         lo = lo.min(0.0);
         hi = hi.max(0.0);
     }
@@ -509,7 +667,10 @@ fn cartesian(
         _ => ((hi - lo) * 0.05, (hi - lo) * 0.05),
     };
     let (ylo, yhi) = (lo - below, hi + above);
-    let (ticks, step) = nice_ticks(ylo, yhi, 6);
+    let yticks = axis_ticks(ylo, yhi, 6, prep.logy);
+    let value_unit_series = if kind == Kind::Bubble { &series[..1] } else { &series[..] };
+    let yunit = if spec.units.y { common_unit(value_unit_series) } else { None };
+    let xunit = if spec.units.x && numeric_x { table.x_unit.clone() } else { None };
 
     let (width, height) = (spec.width as f64, spec.height as f64);
     let multi = series.len() > 1
@@ -517,21 +678,27 @@ fn cartesian(
             kind,
             Kind::Line | Kind::Bar | Kind::Area | Kind::Stacked | Kind::Step | Kind::Scatter | Kind::Histogram
         );
+    // A legend names the columns: by default where there are several.
+    let legend_on = spec.legend.unwrap_or(multi)
+        && matches!(
+            kind,
+            Kind::Line | Kind::Bar | Kind::Area | Kind::Stacked | Kind::Step | Kind::Scatter | Kind::Histogram
+        );
     let left = 18.0
-        + ticks
+        + yticks
             .iter()
-            .map(|t| tick_text(*t, step).chars().count())
+            .map(|(_, t)| t.chars().count())
             .max()
             .unwrap_or(2) as f64
             * 6.5;
     let (right, top, bottom) = (
         16.0,
-        match (multi, spec.title.is_some()) {
+        match (legend_on, spec.title.is_some()) {
             (true, _) => 52.0,
             (false, true) => 34.0,
             _ => 12.0,
-        },
-        30.0,
+        } + if yunit.is_some() { 12.0 } else { 0.0 },
+        30.0 + if xunit.is_some() { 12.0 } else { 0.0 },
     );
     let (x0, x1) = if numeric_x {
         let xs: Vec<f64> = (0..n).map(xat).filter(|x| x.is_finite()).collect();
@@ -541,6 +708,7 @@ fn cartesian(
         if !a.is_finite() {
             return Err("there are no numbers along `x`".to_string());
         }
+        let (a, b) = if spec.origin.x && !prep.logx { (a.min(0.0), b.max(0.0)) } else { (a, b) };
         let span = if b > a { b - a } else { 2.0 };
         let pad = span * if matches!(kind, Kind::Scatter | Kind::Bubble) { 0.08 } else { 0.0 };
         if b > a { (a - pad, b + pad) } else { (a - 1.0, a + 1.0) }
@@ -564,7 +732,7 @@ fn cartesian(
     };
 
     // The grid, and the vertical axis' labels.
-    for t in &ticks {
+    for (t, label) in &yticks {
         chart
             .draw_series(std::iter::once(PathElement::new(
                 vec![(x0, *t), (x1, *t)],
@@ -577,11 +745,56 @@ fn cartesian(
             "<text x=\"{:.1}\" y=\"{:.1}\" text-anchor=\"end\" opacity=\"0.75\">{}</text>",
             left - 6.0,
             y + 4.0,
-            tick_text(*t, step)
+            label
+        );
+        if spec.ticks.y {
+            let _ = writeln!(
+                text,
+                "<line x1=\"{:.1}\" x2=\"{left:.1}\" y1=\"{y:.1}\" y2=\"{y:.1}\" stroke=\"#000000\" opacity=\"0.55\"/>",
+                left - 4.0
+            );
+        }
+    }
+    // The axes along the edges of the plot.
+    if spec.ticks.y {
+        let _ = writeln!(
+            text,
+            "<path d=\"M{left:.1} {top:.1}V{:.1}\" fill=\"none\" stroke=\"#000000\" opacity=\"0.55\"/>",
+            height - bottom
+        );
+    }
+    if spec.ticks.x {
+        let _ = writeln!(
+            text,
+            "<path d=\"M{left:.1} {:.1}H{:.1}\" fill=\"none\" stroke=\"#000000\" opacity=\"0.55\"/>",
+            height - bottom,
+            width - right
+        );
+    }
+    if let Some(unit) = &yunit {
+        // Set against the axis; where it is too long for the margin, from the
+        // edge of the drawing, so that it is not cut off.
+        let fits = unit.chars().count() as f64 * 6.5 + 6.0 <= left - 6.0;
+        let _ = writeln!(
+            text,
+            "<text x=\"{:.1}\" y=\"{:.1}\" text-anchor=\"{}\" opacity=\"0.75\" font-style=\"italic\">{}</text>",
+            if fits { left - 6.0 } else { 8.0 },
+            top - 6.0,
+            if fits { "end" } else { "start" },
+            escape(unit)
+        );
+    }
+    if let Some(unit) = &xunit {
+        let _ = writeln!(
+            text,
+            "<text x=\"{:.1}\" y=\"{:.1}\" text-anchor=\"end\" opacity=\"0.75\" font-style=\"italic\">{}</text>",
+            width - right,
+            height - 4.0,
+            escape(unit)
         );
     }
     // The axis along the bottom, at zero where that is in view.
-    let base = if ylo <= 0.0 && yhi >= 0.0 { 0.0 } else { ylo };
+    let base = if !prep.logy && ylo <= 0.0 && yhi >= 0.0 { 0.0 } else { ylo };
     chart
         .draw_series(std::iter::once(PathElement::new(
             vec![(x0, base), (x1, base)],
@@ -591,8 +804,8 @@ fn cartesian(
 
     // The labels along it, thinned to what fits.
     if numeric_x {
-        let (xt, xstep) = nice_ticks(x0, x1, ((width - left - right) / 70.0).max(2.0) as usize);
-        for t in xt {
+        let xt = axis_ticks(x0, x1, ((width - left - right) / 70.0).max(2.0) as usize, prep.logx);
+        for (t, label) in xt {
             chart
                 .draw_series(std::iter::once(PathElement::new(
                     vec![(t, ylo), (t, yhi)],
@@ -604,8 +817,16 @@ fn cartesian(
                 text,
                 "<text x=\"{x:.1}\" y=\"{:.1}\" text-anchor=\"middle\" opacity=\"0.75\">{}</text>",
                 height - bottom + 16.0,
-                tick_text(t, xstep)
+                label
             );
+            if spec.ticks.x {
+                let _ = writeln!(
+                    text,
+                    "<line x1=\"{x:.1}\" x2=\"{x:.1}\" y1=\"{:.1}\" y2=\"{:.1}\" stroke=\"#000000\" opacity=\"0.55\"/>",
+                    height - bottom,
+                    height - bottom + 4.0
+                );
+            }
         }
     } else {
         let longest = table
@@ -625,6 +846,14 @@ fn cartesian(
                 height - bottom + 16.0,
                 escape(label)
             );
+            if spec.ticks.x {
+                let _ = writeln!(
+                    text,
+                    "<line x1=\"{x:.1}\" x2=\"{x:.1}\" y1=\"{:.1}\" y2=\"{:.1}\" stroke=\"#000000\" opacity=\"0.55\"/>",
+                    height - bottom,
+                    height - bottom + 4.0
+                );
+            }
         }
     }
 
@@ -670,7 +899,8 @@ fn cartesian(
                             }
                         }
                         _ => {
-                            if run.len() > 1 {
+                            // With a fit, that is the line: the points keep their error bars.
+                            if run.len() > 1 && spec.fit == Fit::None {
                                 chart
                                     .draw_series(LineSeries::new(run.clone(), c.stroke_width(2)))
                                     .map_err(|x| e(&x))?;
@@ -977,11 +1207,249 @@ fn cartesian(
         _ => {}
     }
 
-    if multi {
+    // Each value, at its mark and beyond its error bar: its `x`, its `y` or
+    // both.
+    let value_text = |v: f64| short(if prep.logy { 10f64.powf(v) } else { v });
+    // As the column's format shows them: the labels are the cells' text.
+    let x_text = |i: usize| escape(table.labels.get(i).map_or("", String::as_str));
+    let y_text = |s: Option<&Series>, i: usize, v: f64| match s.and_then(|s| s.shown.get(i)) {
+        Some(shown) if !shown.is_empty() => escape(shown),
+        _ => value_text(v),
+    };
+    let mark_text = |s: Option<&Series>, i: usize, v: f64| match (spec.labels.x, spec.labels.y) {
+        (true, true) => format!("{}, {}", x_text(i), y_text(s, i, v)),
+        (true, false) => x_text(i),
+        _ => y_text(s, i, v),
+    };
+    let mut put = |x: f64, y: f64, label: String| {
+        let _ = writeln!(
+            text,
+            "<text x=\"{x:.1}\" y=\"{y:.1}\" text-anchor=\"middle\" font-size=\"10\" opacity=\"0.85\">{label}</text>"
+        );
+    };
+    if spec.labels.x || spec.labels.y {
+        // Past the error bar, where the value has one.
+        let bars = matches!(kind, Kind::Line | Kind::Bar | Kind::Scatter);
+        match kind {
+            Kind::Line | Kind::Step | Kind::Area | Kind::Scatter | Kind::Bubble => {
+                for s in ys {
+                    for (i, v) in s.values.iter().enumerate() {
+                        if let (Some(v), true) = (v, xat(i).is_finite()) {
+                            let sigma = if bars { s.sigma.get(i).copied().unwrap_or(0.0) } else { 0.0 };
+                            let (x, y) = px(&chart, xat(i), v + sigma);
+                            put(x, y - 8.0, mark_text(Some(s), i, *v));
+                        }
+                    }
+                }
+            }
+            Kind::Bar | Kind::Histogram => {
+                let (slot, origin) = if kind == Kind::Histogram {
+                    (1.0 / series.len() as f64, 0.5)
+                } else {
+                    (0.8 / series.len() as f64, 0.4)
+                };
+                for (si, s) in series.iter().enumerate() {
+                    for (i, v) in s.values.iter().enumerate() {
+                        if let Some(v) = v {
+                            let c = i as f64 - origin + (si as f64 + 0.5) * slot;
+                            let sigma = if bars { s.sigma.get(i).copied().unwrap_or(0.0) } else { 0.0 };
+                            let (x, y) = if *v >= 0.0 { px(&chart, c, v + sigma) } else { px(&chart, c, v - sigma) };
+                            put(x, if *v >= 0.0 { y - 4.0 } else { y + 12.0 }, mark_text(Some(s), i, *v));
+                        }
+                    }
+                }
+            }
+            // Above the wick: the value, or the close of open, high, low, close.
+            Kind::Candle => {
+                let (shown, high) = if ohlc { (3, 1) } else { (0, 0) };
+                for i in 0..n {
+                    let (Some(v), Some(top)) = (
+                        series[shown].values.get(i).copied().flatten(),
+                        series[high].values.get(i).copied().flatten(),
+                    ) else {
+                        continue;
+                    };
+                    let reach = if ohlc { 0.0 } else { 2.0 * spec.k * series[0].sigma.get(i).copied().unwrap_or(0.0) };
+                    let (x, y) = px(&chart, i as f64, top + reach);
+                    put(x, y - 4.0, mark_text(Some(&series[shown]), i, v));
+                }
+            }
+            Kind::Waterfall => {
+                let last = prep.bars.len() - 1;
+                for (i, (from, to)) in prep.bars.iter().enumerate() {
+                    let (x, y) = px(&chart, i as f64, from.max(*to));
+                    put(x, y - 4.0, mark_text(None, i, if i == last { *to } else { to - from }));
+                }
+            }
+            _ => {}
+        }
+    }
+    // A curve fitted through each series, in the axes as drawn. It is cut to the plot
+    // by its geometry: a clip path would be drawn as a shape by some renderers.
+    let (pt, pb) = (top, height - bottom);
+    if spec.fit != Fit::None && matches!(kind, Kind::Line | Kind::Step | Kind::Area | Kind::Scatter | Kind::Bubble) {
+        let sign = |b: f64| if b < 0.0 { "−" } else { "+" };
+        for (si, s) in ys.iter().enumerate() {
+            let mut pts: Vec<(f64, f64)> = s
+                .values
+                .iter()
+                .enumerate()
+                .filter_map(|(i, v)| Some((xat(i), (*v)?)))
+                .filter(|(x, _)| x.is_finite())
+                .collect();
+            if pts.len() < 2 {
+                continue;
+            }
+            pts.sort_by(|a, b| a.0.total_cmp(&b.0));
+            // A line or a parabola goes on across the whole of the axis, to the origin
+            // where that is in view; a curve through the points stops at them.
+            let (xa, xb) = if spec.fit == Fit::Bezier { (pts[0].0, pts[pts.len() - 1].0) } else { (x0, x1) };
+            let (mut path, mut equation) = (String::new(), String::new());
+            match spec.fit {
+                Fit::Bezier => {
+                    // Catmull-Rom through the points, as cubic Béziers.
+                    let p: Vec<(f64, f64)> = pts.iter().map(|(x, y)| px(&chart, *x, *y)).collect();
+                    let _ = write!(path, "M{:.1} {:.1}", p[0].0, p[0].1);
+                    for j in 0..p.len() - 1 {
+                        let (p0, p1, p2) = (p[j.saturating_sub(1)], p[j], p[j + 1]);
+                        let p3 = p[(j + 2).min(p.len() - 1)];
+                        let _ = write!(
+                            path,
+                            "C{:.1} {:.1} {:.1} {:.1} {:.1} {:.1}",
+                            p1.0 + (p2.0 - p0.0) / 6.0,
+                            p1.1 + (p2.1 - p0.1) / 6.0,
+                            p2.0 - (p3.0 - p1.0) / 6.0,
+                            p2.1 - (p3.1 - p1.1) / 6.0,
+                            p2.0,
+                            p2.1
+                        );
+                    }
+                }
+                Fit::Quadratic if pts.len() >= 3 => {
+                    // Least squares by the normal equations, about the mean x so
+                    // that they stay well conditioned.
+                    let mx = pts.iter().map(|p| p.0).sum::<f64>() / pts.len() as f64;
+                    let sum = |f: &dyn Fn(f64, f64) -> f64| pts.iter().map(|(x, y)| f(x - mx, *y)).sum::<f64>();
+                    let (s0, s1, s2, s3, s4) = (
+                        pts.len() as f64,
+                        sum(&|x, _| x),
+                        sum(&|x, _| x * x),
+                        sum(&|x, _| x * x * x),
+                        sum(&|x, _| x * x * x * x),
+                    );
+                    let (t0, t1, t2) = (sum(&|_, y| y), sum(&|x, y| x * y), sum(&|x, y| x * x * y));
+                    let det = |m: [[f64; 3]; 3]| {
+                        m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1])
+                            - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0])
+                            + m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0])
+                    };
+                    let m = [[s4, s3, s2], [s3, s2, s1], [s2, s1, s0]];
+                    let d = det(m);
+                    if d.abs() <= 1e-12 * m[0][0].abs().max(1e-300) * m[1][1].abs().max(1e-300) * s0 {
+                        continue;
+                    }
+                    let col = |c: usize, v: [f64; 3]| {
+                        let mut r = m;
+                        for k in 0..3 {
+                            r[k][c] = v[k];
+                        }
+                        det(r) / d
+                    };
+                    let (a, b, c) = (col(0, [t2, t1, t0]), col(1, [t2, t1, t0]), col(2, [t2, t1, t0]));
+                    let at = |x: f64| a * (x - mx).powi(2) + b * (x - mx) + c;
+                    // A point off the plot ends the stroke, and the next one starts another.
+                    let mut pen = false;
+                    for j in 0..=120 {
+                        let x = xa + (xb - xa) * j as f64 / 120.0;
+                        let (u, v) = px(&chart, x, at(x));
+                        if v < pt || v > pb {
+                            pen = false;
+                            continue;
+                        }
+                        let _ = write!(path, "{}{u:.1} {v:.1}", if pen { "L" } else { "M" });
+                        pen = true;
+                    }
+                    // Back to the plain powers of x for the equation.
+                    let (qa, qb, qc) = (a, b - 2.0 * a * mx, c - b * mx + a * mx * mx);
+                    equation = if prep.logx || prep.logy {
+                        "quadratic, on the log axes".to_string()
+                    } else {
+                        format!(
+                            "y = {}x² {} {}x {} {}",
+                            short(qa), sign(qb), short(qb.abs()), sign(qc), short(qc.abs())
+                        )
+                    };
+                }
+                _ => {
+                    let m = pts.len() as f64;
+                    let (sx, sy) = pts.iter().fold((0.0, 0.0), |(a, b), (x, y)| (a + x, b + y));
+                    let sxx: f64 = pts.iter().map(|(x, _)| x * x).sum();
+                    let sxy: f64 = pts.iter().map(|(x, y)| x * y).sum();
+                    let den = m * sxx - sx * sx;
+                    if den.abs() <= 1e-12 * (m * sxx).abs().max(1e-300) {
+                        continue;
+                    }
+                    let a = (m * sxy - sx * sy) / den;
+                    let b = (sy - a * sx) / m;
+                    // The part of the line that is within the heights of the plot.
+                    let (mut xa, mut xb) = (xa, xb);
+                    if a != 0.0 {
+                        let (u, v) = ((ylo - b) / a, (yhi - b) / a);
+                        xa = xa.max(u.min(v));
+                        xb = xb.min(u.max(v));
+                    } else if b < ylo || b > yhi {
+                        continue;
+                    }
+                    if xa > xb {
+                        continue;
+                    }
+                    let (p, q) = (px(&chart, xa, a * xa + b), px(&chart, xb, a * xb + b));
+                    let _ = write!(path, "M{:.1} {:.1}L{:.1} {:.1}", p.0, p.1, q.0, q.1);
+                    equation = match (prep.logx, prep.logy) {
+                        (false, false) => format!("y = {}x {} {}", short(a), sign(b), short(b.abs())),
+                        (false, true) => format!("y = {} × {}^x", short(10f64.powf(b)), short(10f64.powf(a))),
+                        (true, true) => format!("y = {} × x^{}", short(10f64.powf(b)), short(a)),
+                        (true, false) => format!("y = {} log₁₀x {} {}", short(a), sign(b), short(b.abs())),
+                    };
+                }
+            }
+            if path.is_empty() {
+                continue;
+            }
+            let _ = writeln!(
+                text,
+                "<path d=\"{path}\" fill=\"none\" stroke=\"{}\" {}/>",
+                hex(si),
+                // The line of a line plot, whole; on the others it is dashed over the points.
+                if kind == Kind::Line { "stroke-width=\"2\"" } else { "stroke-width=\"1.5\" stroke-dasharray=\"6 4\"" }
+            );
+            if !equation.is_empty() {
+                // In the corner the curve leaves free: the top left where it rises.
+                let rises = pts[pts.len() - 1].1 >= pts[0].1;
+                let _ = writeln!(
+                    text,
+                    "<text x=\"{:.1}\" y=\"{:.1}\" text-anchor=\"{}\" font-size=\"11\" fill=\"{}\">{}</text>",
+                    if rises { left + 8.0 } else { width - right - 6.0 },
+                    top + 14.0 + 14.0 * si as f64,
+                    if rises { "start" } else { "end" },
+                    hex(si),
+                    escape(&equation)
+                );
+            }
+        }
+    }
+
+    if legend_on {
         let names: Vec<(String, String)> = series
             .iter()
             .enumerate()
-            .map(|(i, s)| (s.name.clone(), hex(i)))
+            .map(|(i, s)| {
+                let name = match (&s.unit, spec.units.y) {
+                    (Some(u), true) => format!("{} ({u})", s.name),
+                    _ => s.name.clone(),
+                };
+                (name, hex(i))
+            })
             .collect();
         legend(&names, width, text);
     }
@@ -999,9 +1467,10 @@ fn cartesian(
     if let (Some(note), false) = (note, multi) {
         let _ = writeln!(
             text,
-            "<text x=\"{:.1}\" y=\"{:.1}\" text-anchor=\"end\" opacity=\"0.6\" font-size=\"11\">{}</text>",
+            "<text class=\"note\" x=\"{:.1}\" y=\"{:.1}\" text-anchor=\"end\" opacity=\"0.6\" font-size=\"11\">{}</text>\n<desc>{}</desc>",
             width - right,
             14.0,
+            escape(&note),
             escape(&note)
         );
     }
@@ -1249,14 +1718,19 @@ mod tests {
                     name: "Revenue".into(),
                     values: vec![Some(100.0), Some(120.0), Some(150.0)],
                     sigma: vec![0.0; 3],
+                    unit: None,
+                    shown: Vec::new(),
                 },
                 Series {
                     name: "Cost".into(),
                     values: vec![Some(60.0), None, Some(90.0)],
                     sigma: vec![0.0; 3],
+                    unit: None,
+                    shown: Vec::new(),
                 },
             ],
             xs: None,
+            x_unit: None,
         }
     }
 

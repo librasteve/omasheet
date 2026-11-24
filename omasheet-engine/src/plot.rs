@@ -26,6 +26,50 @@ fn number(v: &Value) -> Result<Option<(f64, f64)>, &'static str> {
     })
 }
 
+/// The sign of a currency where it has one, `£` for `GBP`: as a column of money
+/// is shown; any other unit as it is.
+fn money_sign(unit: &str) -> String {
+    match unit {
+        "USD" => "$",
+        "EUR" => "€",
+        "GBP" => "£",
+        "JPY" => "¥",
+        "CNY" => "￥",
+        "INR" => "₹",
+        "KRW" => "₩",
+        "THB" => "฿",
+        "RUB" => "₽",
+        "TRY" => "₺",
+        "ILS" => "₪",
+        "PHP" => "₱",
+        "UAH" => "₴",
+        "VND" => "₫",
+        "NGN" => "₦",
+        other => other,
+    }
+    .to_string()
+}
+
+/// The mark of a column that shows money in pence or cents, `p`, `¢` or `c`, if
+/// it does: its values are plotted in that hundredth, as it shows them.
+fn sub_mark(col: &omasheet_omx::check::Column, unit: &str) -> Option<&'static str> {
+    use omasheet_omx::colfmt::Format;
+    let sub = match col.shown_format().as_deref() {
+        Some(Format::Quantity(q)) => q.number.and_then(|n| n.sub)?,
+        _ => return None,
+    };
+    Some(match (sub, unit.split('.').next().unwrap_or(unit)) {
+        ('p', _) => "p",
+        (_, "USD") => "¢",
+        _ => "c",
+    })
+}
+
+/// The palettes a plot may be drawn in, each with its colours as `#rrggbb`.
+pub fn palettes() -> Vec<(&'static str, Vec<String>)> {
+    omasheet_plot::palettes()
+}
+
 /// The plot named `name`, if the program has one.
 pub fn find<'a>(program: &'a Program, name: &str) -> Option<&'a Plot> {
     program.plots.iter().find(|p| p.name == name)
@@ -45,6 +89,68 @@ pub fn columns(engine: &Engine, program: &Program, plot: &Plot) -> Vec<String> {
             Vec::new()
         }
     }
+}
+
+/// The columns of that sheet whose values can be plotted: numbers, with
+/// empty cells, as far as the first rows say.
+pub fn numeric_columns(engine: &Engine, program: &Program, plot: &Plot) -> Vec<String> {
+    match engine.eval_top(&plot.data) {
+        Some(Value::Sheet(view)) => view
+            .cols
+            .iter()
+            .filter(|&&c| {
+                view.rows
+                    .iter()
+                    .take(2000)
+                    .all(|&r| number(&engine.cell_shown(view.sheet, c, r)).is_ok())
+            })
+            .map(|&c| program.sheets[view.sheet].cols[c].name.clone())
+            .collect(),
+        _ => {
+            engine.take_diags();
+            Vec::new()
+        }
+    }
+}
+
+/// Whether the origin is in view on its own along each axis, `x` then `y`: the
+/// values there go from below zero to above it, or the kind of plot starts
+/// its bars from zero. Then the plot's `origin` has nothing to add.
+pub fn origin_in(engine: &Engine, program: &Program, plot: &Plot) -> (bool, bool) {
+    let Some(Value::Sheet(view)) = engine.eval_top(&plot.data) else {
+        engine.take_diags();
+        return (false, false);
+    };
+    let cols = &program.sheets[view.sheet].cols;
+    let find = |name: &str| view.cols.iter().copied().find(|&c| cols[c].name == name);
+    let x_col = plot.x.as_deref().and_then(find).or(view.cols.first().copied());
+    let y_cols: Vec<usize> = if plot.y.is_empty() {
+        view.cols.iter().copied().filter(|&c| Some(c) != x_col).collect()
+    } else {
+        plot.y.iter().filter_map(|n| find(n)).collect()
+    };
+    // The reach of a column's numbers: none where one is not.
+    let reach = |cs: &[usize]| -> Option<(f64, f64)> {
+        let mut r: Option<(f64, f64)> = None;
+        for &c in cs {
+            for &row in view.rows.iter() {
+                match number(&engine.cell_shown(view.sheet, c, row)) {
+                    Ok(Some((v, _))) => {
+                        r = Some(r.map_or((v, v), |(a, b)| (a.min(v), b.max(v))));
+                    }
+                    Ok(None) => {}
+                    Err(_) => break,
+                }
+            }
+        }
+        r
+    };
+    let spans = |r: Option<(f64, f64)>| r.is_some_and(|(a, b)| a <= 0.0 && b >= 0.0);
+    let from_zero = matches!(plot.kind.as_str(), "bar" | "area" | "stacked" | "histogram" | "waterfall");
+    (
+        x_col.is_some_and(|c| spans(reach(&[c]))),
+        from_zero || spans(reach(&y_cols)),
+    )
 }
 
 /// A mark of a drawn plot, in its pixels, and the cell it stands for.
@@ -119,7 +225,16 @@ pub fn draw_as(
         return Err(one(plot.span, "the plot has no column for its labels".to_string()));
     };
     let y_cols: Vec<usize> = if plot.y.is_empty() {
-        view.cols.iter().copied().filter(|&c| c != x_col).collect()
+        // Left unsaid, the columns of numbers: text beside them is no value.
+        let rest: Vec<usize> = view.cols.iter().copied().filter(|&c| c != x_col).collect();
+        let numbers: Vec<usize> = rest
+            .iter()
+            .copied()
+            .filter(|&c| {
+                view.rows.iter().take(2000).all(|&r| number(&engine.cell_shown(view.sheet, c, r)).is_ok())
+            })
+            .collect();
+        if numbers.is_empty() { rest } else { numbers }
     } else {
         plot.y.iter().filter_map(|n| find(n)).collect()
     };
@@ -142,6 +257,34 @@ pub fn draw_as(
     }
     spec.k = plot.k.unwrap_or(spec.k);
     spec.bins = plot.bins;
+    spec.labels = plot.labels.into();
+    spec.ticks = plot.ticks.into();
+    spec.units = plot.units.into();
+    spec.origin = plot.origin.into();
+    spec.logx = plot.logx;
+    spec.logy = plot.logy;
+    spec.fit = match plot.fit.as_str() {
+        "straight" => omasheet_plot::Fit::Straight,
+        "quadratic" => omasheet_plot::Fit::Quadratic,
+        "bezier" => omasheet_plot::Fit::Bezier,
+        "basic" => omasheet_plot::Fit::None,
+        // Left unsaid, a line is smoothed and any other plot is as it is.
+        _ if kind == "line" => omasheet_plot::Fit::Bezier,
+        _ => omasheet_plot::Fit::None,
+    };
+    spec.legend = plot.legend;
+    spec.palette = plot.palette.clone();
+    // The unit of a column: that of its first cell that has one.
+    let unit_of = |engine: &Engine, c: usize| -> Option<String> {
+        view.rows.iter().find_map(|&r| match engine.cell_shown(view.sheet, c, r) {
+            Value::Quantity(q) => {
+                Some(money_sign(&omasheet_omx::colfmt::pretty_unit(&q.unit().to_string())))
+                    .filter(|u| !u.is_empty())
+            }
+            Value::Duration(_) => Some("s".to_string()),
+            _ => None,
+        })
+    };
 
     let mut table = Table {
         labels: view
@@ -154,6 +297,7 @@ pub fn draw_as(
             .collect(),
         series: Vec::new(),
         xs: None,
+        x_unit: if plot.units.0 || plot.units.1 { unit_of(engine, x_col) } else { None },
     };
     // The labels are numbers where every filled one is.
     let xs: Vec<Option<f64>> = view
@@ -168,16 +312,44 @@ pub fn draw_as(
         table.xs = Some(xs);
     }
     for &c in &y_cols {
+        // Pence or cents, where the column shows them: plotted so, in `p⋅kWh⁻¹`.
+        let raw_unit = view
+            .rows
+            .iter()
+            .find_map(|&r| match engine.cell_shown(view.sheet, c, r) {
+                Value::Quantity(q) => Some(q.unit().to_string()),
+                _ => None,
+            })
+            .unwrap_or_default();
+        let sub = sub_mark(&cols[c], &raw_unit);
+        let scale = if sub.is_some() { 100.0 } else { 1.0 };
         let mut series = Series {
             name: cols[c].name.clone(),
+            unit: if plot.units.0 || plot.units.1 {
+                match (sub, raw_unit.split_once('.')) {
+                    (Some(mark), Some((_, rest))) if rest.ends_with("^-1") => {
+                        Some(format!("{mark}⋅{}", omasheet_omx::colfmt::pretty_unit(rest)))
+                    }
+                    (Some(mark), _) => Some(mark.to_string()),
+                    _ => unit_of(engine, c),
+                }
+            } else {
+                None
+            },
             ..Series::default()
         };
         for &r in view.rows.iter() {
             match number(&engine.cell_shown(view.sheet, c, r)) {
                 Ok(cell) => {
                     let (v, s) = cell.map_or((None, 0.0), |(v, s)| (Some(v), s));
-                    series.values.push(v);
-                    series.sigma.push(s);
+                    series.values.push(v.map(|v| v * scale));
+                    series.sigma.push(s * scale);
+                    series.shown.push(if v.is_some() && plot.labels.1 {
+                        let cell = engine.cell_shown(view.sheet, c, r);
+                        engine.show_in(&cell, false, cols[c].shown_format().as_deref())
+                    } else {
+                        String::new()
+                    });
                 }
                 Err(kind) => {
                     return Err(one(

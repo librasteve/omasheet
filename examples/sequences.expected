@@ -54,3 +54,33 @@ pick(20) takes all 8   | 8
 pick(8) deals each     | 64
 a shuffle keeps the 15 | 15
 a die is 1 to 6        | true
+
+sheet Symbols
+
+Greek | Zodiac
+------|-------
+α     | ♈️
+β     | ♉️
+γ     | ♊️
+δ     | ♋️
+ε     | ♌️
+ζ     | ♍️
+η     | ♎️
+θ     | ♏️
+ι     | ♐️
+κ     | ♑️
+λ     | ♒️
+μ     | ♓️
+ν     |
+ξ     |
+ο     |
+π     |
+ρ     |
+σ     |
+τ     |
+υ     |
+φ     |
+χ     |
+ψ     |
+ω     |
+      |

@@ -40,7 +40,46 @@ pub struct FileAst {
 }
 
 /// The controls a `plot` takes.
-pub const PLOT_KEYS: &str = "type, data, x, y, title, width, height, k, bins";
+pub const PLOT_KEYS: &str =
+    "type, data, x, y, title, width, height, k, bins, labels, ticks, units, origin, logx, logy, fit, legend, palette";
+
+/// The controls of a plot that are `true` or `false`.
+pub const PLOT_FLAGS: [&str; 3] = ["logx", "logy", "legend"];
+
+/// The palettes of a plot, the first being the default.
+pub const PLOT_PALETTES: [&str; 7] = ["classic", "vivid", "pastel", "earth", "cool", "warm", "mono"];
+
+/// What `fit` may be: a kind of curve fitted to the values, or `true` for
+/// the first, or `false` for none.
+pub const PLOT_FITS: &str = "basic, straight, quadratic or bezier";
+
+/// The curve `value` of `fit` names: `basic` is the points joined by straight
+/// segments, with no fit, and `false` says the same. A line plot left to
+/// itself is `bezier`; any other, `basic`.
+pub fn fit_kind(value: &str) -> Option<&'static str> {
+    match value {
+        "false" | "basic" => Some("basic"),
+        "true" | "straight" => Some("straight"),
+        "quadratic" => Some("quadratic"),
+        "bezier" => Some("bezier"),
+        _ => None,
+    }
+}
+
+/// The controls that are for an axis or both: `x`, `y`, `both`, `true` (as
+/// `both`) or `false`.
+pub const PLOT_AXIS_FLAGS: [&str; 4] = ["labels", "ticks", "units", "origin"];
+
+/// What `value` of an axis control says: for the x axis, and the y axis.
+pub fn axis_flag(value: &str) -> Option<(bool, bool)> {
+    match value {
+        "x" => Some((true, false)),
+        "y" => Some((false, true)),
+        "both" | "true" => Some((true, true)),
+        "false" => Some((false, false)),
+        _ => None,
+    }
+}
 
 /// The kinds of plot.
 pub const PLOT_KINDS: &str = "line, bar, pie, candle, scatter, area, stacked, step, histogram, box, heatmap, waterfall, bubble, donut";

@@ -608,15 +608,6 @@ fn render_matches_the_expected_report() {
 }
 
 #[test]
-fn render_matches_the_expected_plots() {
-    let out = omasheet(&["render", "examples/plot-report.md"]);
-    assert!(out.status.success(), "{}", stderr(&out));
-    let expected = std::fs::read_to_string(root().join("examples/plot-report.expected")).unwrap();
-    assert_eq!(stdout(&out), expected);
-    assert_eq!(expected.matches("<svg").count(), 5);
-}
-
-#[test]
 fn render_writes_html() {
     let dir = scratch("render");
     let page = path(&dir, "report.html");
@@ -733,10 +724,10 @@ fn render_reports_where_in_the_document() {
 }
 
 #[test]
-fn render_matches_the_expected_other_plots() {
-    let out = omasheet(&["render", "examples/plots2-report.md"]);
+fn render_matches_the_expected_plots() {
+    let out = omasheet(&["render", "examples/plots-report.md"]);
     assert!(out.status.success(), "{}", stderr(&out));
-    let expected = std::fs::read_to_string(root().join("examples/plots2-report.expected")).unwrap();
+    let expected = std::fs::read_to_string(root().join("examples/plots-report.expected")).unwrap();
     assert_eq!(stdout(&out), expected);
-    assert_eq!(expected.matches("<svg").count(), 12);
+    assert_eq!(expected.matches("<svg").count(), 16);
 }

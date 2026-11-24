@@ -645,6 +645,7 @@ pub fn show_in(q: &Quantity, f: &omasheet_omx::colfmt::QuantityFormat, style: &S
     if let Some(code) = currency_code(&converted) {
         // Money is shown to the places it is spent in, unless the format says.
         if number.places.is_none()
+            && number.sub.is_none()
             && number.conv == omasheet_omx::colfmt::SciConv::General
             && !number.plus_minus
             && !number.value_only
@@ -657,9 +658,29 @@ pub fn show_in(q: &Quantity, f: &omasheet_omx::colfmt::QuantityFormat, style: &S
             return render_money(&converted, &code, &number, style);
         }
     }
+    // A price for each of something, `£0.245⋅kWh⁻¹` or `24.5p⋅kWh⁻¹`, by the sign.
+    if number.sign
+        && let Some((code, per)) = converted
+            .unit()
+            .to_string()
+            .split_once('.')
+            .and_then(|(c, rest)| rest.ends_with("^-1").then(|| (c.to_string(), rest.to_string())))
+        && Registry::builtin().rate(&code).is_some()
+    {
+        // Per, as any unit with a negative power is: `24.5p⋅kWh⁻¹`.
+        let per = if number.ascii { format!(".{per}") } else { format!("⋅{}", omasheet_omx::colfmt::pretty_unit(&per)) };
+        return format!("{}{per}", render_money(&converted, &code, &number, style));
+    }
     // The unit is in the column's head where the column has one, unless a
     // value cannot be put in it, which keeps its own, so it is not mistaken.
     let head = fits && f.lifts(false);
+    // Pence or cents, in the head's unit: a hundred times the pounds.
+    if head
+        && number.sub.is_some()
+        && let Ok(scaled) = Quantity::new(converted.value() * 100.0, converted.sigma() * 100.0, converted.unit().clone())
+    {
+        return render(&scaled, &number, style, false, false);
+    }
     render(&converted, &number, style, false, !head)
 }
 
@@ -717,6 +738,18 @@ pub fn money_places(code: &str) -> u32 {
 /// An amount of money by its sign, `€4.55` and `-$5.00`, or by its code
 /// after the number where it has no sign, `4.55CHF`.
 fn render_money(q: &Quantity, code: &str, f: &SciFormat, style: &Style) -> String {
+    // In a hundredth of the unit, `24.5p` and `3.5¢`: its own mark after the number.
+    if let Some(letter) = f.sub {
+        let number = crate::value::format_scientific(q.value() * 100.0, q.sigma() * 100.0, f, style);
+        let number = if q.sigma() == 0.0 && !f.plus_minus { number.replacen("(0)", "", 1) } else { number };
+        let mark = match (letter, code) {
+            ('p', _) => "p",
+            (_, "USD") => "¢",
+            _ => "c",
+        };
+        let gap = if f.gap { " " } else { "" };
+        return format!("{number}{gap}{mark}");
+    }
     let mut number = crate::value::format_scientific(q.value(), q.sigma(), f, style);
     if q.sigma() == 0.0 && !f.plus_minus {
         number = number.replacen("(0)", "", 1);

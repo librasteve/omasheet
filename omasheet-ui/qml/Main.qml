@@ -380,12 +380,20 @@ ApplicationWindow {
     property bool showPlotSettings: file.savedPlotSettings()
     onShowPlotSettingsChanged: {
         file.savePlotSettings(showPlotSettings);
-        plotTimer.restart();
+        // Drawn at once at the new width, once the layout has moved, so that
+        // the old picture is not seen stretched while the timer runs.
+        Qt.callLater(win.drawPlot);
     }
-    readonly property int plotSettingsWidth: showPlotSettings ? Math.round(fontSize * 22) : 0
+    // The width of the settings pane, as dragged; and the height of its tile
+    // of kinds, 0 until dragged.
+    property real plotSettingsPref: 0
+    property real kindTilesPref: 0
+    property real palettePref: 0
+    readonly property int plotSettingsWidth: showPlotSettings
+        ? Math.round(Math.max(fontSize * 16, Math.min(plotSettingsPref > 0 ? plotSettingsPref : fontSize * 22, width * 0.45))) : 0
     // What the plots take of the window, settings and all: the divider is
     // here, and it does not move as the settings come and go.
-    readonly property int plotTotalWidth: Math.max(fontSize * 18 + plotSettingsWidth, Math.min(plotShare * width, width * 0.7))
+    readonly property int plotTotalWidth: Math.max(fontSize * 18 + plotSettingsWidth, Math.min(plotShare * width, width))
     readonly property int plotPaneWidth: plotTotalWidth - plotSettingsWidth
     property var plotNames: []
     readonly property var plotKinds: ["line", "bar", "pie", "candle", "scatter", "area", "stacked", "step", "histogram", "box", "heatmap", "waterfall", "bubble", "donut"]
@@ -400,6 +408,7 @@ ApplicationWindow {
     // What the pane shows of the plot it is on: its controls as written, and
     // the columns of its data; and why the last change to it was refused.
     property var plotInfo: ({ controls: {}, columns: [] })
+    property string plotInfoText: ""
     property string plotProblem: ""
     // A plot to go to once the list of them is read again: the new one.
     property string plotWant: ""
@@ -425,10 +434,17 @@ ApplicationWindow {
         if (plotIndex >= names.length) plotIndex = 0;
         if (names.length === 0) {
             plotSvg = "";
+            plotInfoText = "";
             plotInfo = { controls: {}, columns: [] };
             return;
         }
-        try { plotInfo = JSON.parse(file.plotInfoJson(names[plotIndex])); } catch (e) { }
+        // Only a change is taken, so that the controls are not made again, and
+        // flash, when the plot is drawn again for no change of theirs.
+        var info = file.plotInfoJson(names[plotIndex]);
+        if (info !== plotInfoText) {
+            plotInfoText = info;
+            try { plotInfo = JSON.parse(info); } catch (e) { }
+        }
         if (!showPlot) {
             plotSvg = "";
             return;
@@ -438,11 +454,55 @@ ApplicationWindow {
         plotDrawW = Math.round(w);
         plotDrawH = Math.round(h);
         plotSvg = file.plotSvg(names[plotIndex], plotDrawW, plotDrawH, win.font.family);
+        // What a plot notes of itself, as its bins or its quartiles, is said in the bar.
+        var note = /<desc>([^<]*)<\/desc>/.exec(plotSvg);
+        plotNote = note ? note[1].replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, "\"").replace(/&amp;/g, "&") : "";
+        // A plot that cannot be drawn says why in the bar below.
+        if (plotSvg.indexOf("<svg") !== 0) {
+            if (plotProblem !== plotSvg) {
+                plotProblem = plotSvg;
+                refusalRev++;
+            }
+        } else if (plotProblem.length > 0 && plotProblem === plotDrawError) {
+            plotProblem = "";
+        }
+        plotDrawError = plotSvg.indexOf("<svg") !== 0 ? plotSvg : "";
     }
+    property string plotDrawError: ""
+    property string plotNote: ""
     // Set a control of the plot the pane is on; false, and why, if refused.
     function setPlot(key, value) {
         plotProblem = file.setPlotControl(plotNames[plotIndex], key, value);
+        // A refusal is said in the bar below, and lit again if it is repeated.
+        if (plotProblem.length > 0)
+            refusalRev++;
         return plotProblem.length === 0;
+    }
+    // A plot of the sheet shown, with the settings pane open to set it up.
+    function newPlot() {
+        var name = promptDialog.freePlotName();
+        var message = file.addPlot(name, "line", promptDialog.plotSheet());
+        if (message.length === 0) {
+            plotProblem = "";
+            plotWant = name;
+            showPlot = true;
+            showPlotSettings = true;
+        } else {
+            plotProblem = message;
+            refusalRev++;
+        }
+    }
+    // What was refused is the bar's notice until something else is done.
+    property string plotNotice: ""
+    onPlotProblemChanged: {
+        if (plotProblem.length > 0) {
+            notice = plotProblem;
+            plotNotice = plotProblem;
+        } else if (plotNotice.length > 0) {
+            if (notice === plotNotice)
+                notice = "";
+            plotNotice = "";
+        }
     }
     function shortened(text) {
         text = text || "";
@@ -3549,6 +3609,15 @@ ApplicationWindow {
         return found;
     }
 
+    // Whether the sheet shown has a column of money, which is when the
+    // footer says what the rates are as of.
+    readonly property bool sheetHasMoney: {
+        var cols = sheet.columns || [];
+        for (var i = 0; i < cols.length; i++)
+            if (cols[i].type === "Currency")
+                return true;
+        return false;
+    }
     // Whether a column type is a quantity: `Quantity`, or a kind of one.
     property var quantityNames: file.quantityTypes().split("\n")
     function isQuantityType(type) {
@@ -5415,7 +5484,7 @@ ApplicationWindow {
                                         // cell that has just changed before unitSet has caught up.
                                         readonly property string unitText: !!cellItem.cell && !!cellItem.cell.u ? cellItem.cell.u : ""
                                         readonly property bool unitSet: !marked && !lines && unitText.length > 0
-                                            && !cellItem.cell.e
+                                            && !!cellItem.cell && !cellItem.cell.e
                                             && shownText.length > unitText.length
                                             && shownText.slice(-unitText.length) === unitText
                                         function escaped(t) {
@@ -6265,7 +6334,6 @@ ApplicationWindow {
                         FooterButton { label: "+ Row"; quiet: true; visible: footerBar.narrow; enabled: !win.sheet.isConsts && win.tabs.length > 0; onClicked: win.appendRow() }
                         FooterButton { label: "+ Column"; quiet: true; visible: footerBar.narrow; enabled: !win.sheet.isConsts && win.tabs.length > 0; onClicked: promptDialog.ask("column") }
                         FooterButton { label: "+ Constant"; quiet: true; visible: footerBar.narrow; onClicked: promptDialog.ask("const") }
-                        FooterButton { label: "+ Plot"; quiet: true; visible: footerBar.narrow; enabled: win.snap.sheets.length > 0 && !win.sheet.isConsts; onClicked: promptDialog.ask("plot") }
                     }
                 }
                 FooterButton {
@@ -6282,7 +6350,6 @@ ApplicationWindow {
                 FooterButton { id: addRowButton; label: "+ Row"; quiet: true; visible: !footerBar.narrow; enabled: !win.sheet.isConsts && win.tabs.length > 0; onClicked: win.appendRow() }
                 FooterButton { id: addColumnButton; label: "+ Column"; quiet: true; visible: !footerBar.narrow; enabled: !win.sheet.isConsts && win.tabs.length > 0; onClicked: promptDialog.ask("column") }
                 FooterButton { id: addConstantButton; label: "+ Constant"; quiet: true; visible: !footerBar.narrow; onClicked: promptDialog.ask("const") }
-                FooterButton { id: addPlotButton; label: "+ Plot"; quiet: true; visible: !footerBar.narrow; enabled: win.snap.sheets.length > 0 && !win.sheet.isConsts; onClicked: promptDialog.ask("plot") }
                 FooterButton { id: fnButton; label: "fn()"; quiet: true; onClicked: functionsDialog.open() }
                 FooterButton { id: plotButton; label: "plot"; bars: true; quiet: true; active: win.showPlot; tip: "Show the plots of the file (F7)"; onClicked: win.showPlot = !win.showPlot }
                 FooterButton { id: sourceButton; label: "</>"; quiet: true; active: win.showSource; onClicked: win.viewSource(!win.showSource) }
@@ -6372,7 +6439,8 @@ ApplicationWindow {
                 }
                 // The column's entry hint is what the bar says when it has nothing
                 // else, and it stays.
-                readonly property bool showsEntryHint: win.entryHint.length > 0 && win.hint.length === 0 && win.styleWarning.length === 0
+                readonly property string plotNoteText: win.showPlot ? win.plotNote : ""
+                readonly property bool showsEntryHint: (win.entryHint.length > 0 || plotNoteText.length > 0) && win.hint.length === 0 && win.styleWarning.length === 0
                     && win.notice.length === 0 && win.cellWarning.length === 0 && win.cellFull.length === 0
                     && !moving && !win.formulaCell && (file.status.length === 0 || !statusShown) && win.busyText.length === 0 && !win.filterPending
                 opacity: faded && win.hint.length === 0 && win.cellWarning.length === 0 && win.styleWarning.length === 0 && !showsEntryHint ? 0 : 1
@@ -6402,6 +6470,7 @@ ApplicationWindow {
                     : win.formulaCell ? "This is a formula column, this change will apply to the entire column"
                     : file.status.length > 0 && (statusShown || win.entryHint.length === 0) ? file.status
                     : win.entryHint.length > 0 ? win.entryHint
+                    : plotNoteText.length > 0 ? plotNoteText
                     // With nothing more pressing to say, a calculated sheet
                     // says what it is calculated from.
                     // A formula written over several lines is said in one
@@ -6460,7 +6529,7 @@ ApplicationWindow {
                 // Where the file has money in it, the date its rates are as of;
                 // a click fetches the latest.
                 FooterButton {
-                    visible: file.ratesNote.length > 0
+                    visible: file.ratesNote.length > 0 && win.sheetHasMoney
                     implicitHeight: win.fontSize + 6
                     label: file.ratesNote
                     onClicked: file.updateRates()
@@ -6498,6 +6567,7 @@ ApplicationWindow {
         width: win.plotPaneWidth
         height: grid.height
         color: win.pageColor
+        clip: true
         onWidthChanged: plotTimer.restart()
         onHeightChanged: plotTimer.restart()
 
@@ -6520,7 +6590,7 @@ ApplicationWindow {
             }
             onPositionChanged: function(mouse) {
                 if (pressed)
-                    win.plotShare = Math.max(0.1, (startWidth - (mapToItem(root, mouse.x, 0).x - startX)) / win.width);
+                    win.plotShare = Math.min(1, Math.max(0.1, (startWidth - (mapToItem(root, mouse.x, 0).x - startX)) / win.width));
             }
         }
 
@@ -6576,16 +6646,14 @@ ApplicationWindow {
                         }
                     }
                 }
-            }
-            // Why a change was refused, when the settings are not there to say.
-            Text {
-                visible: win.plotProblem.length > 0 && !win.showPlotSettings
-                width: parent.width
-                wrapMode: Text.Wrap
-                color: win.errorColor
-                font.family: win.font.family
-                font.pixelSize: win.smallSize
-                text: win.plotProblem
+                // A new plot, to the right of the tabs: it is made of the sheet shown, as
+                // a line, and the settings open to say the rest.
+                FooterButton {
+                    label: "+ Plot"
+                    quiet: true
+                    enabled: win.snap.sheets.length > 0 && !win.sheet.isConsts
+                    onClicked: win.newPlot()
+                }
             }
         }
 
@@ -6594,8 +6662,10 @@ ApplicationWindow {
             visible: win.plotSvg.indexOf("<svg") === 0
             x: 12
             y: plotHeader.y + plotHeader.height + 8
-            width: parent.width - 24
-            height: parent.height - y - 12
+            // The size it was drawn at, not the pane's: until it is drawn
+            // again the old picture stays as it was, and is not stretched.
+            width: win.plotDrawW
+            height: win.plotDrawH
             fillMode: Image.PreserveAspectFit
             horizontalAlignment: Image.AlignHCenter
             verticalAlignment: Image.AlignTop
@@ -6635,10 +6705,10 @@ ApplicationWindow {
             y: plotHeader.y + plotHeader.height + 12
             width: parent.width - 32
             wrapMode: Text.Wrap
-            color: win.plotNames.length > 0 ? win.errorColor : win.mutedColor
+            color: win.mutedColor
             font.family: win.font.family
             font.pixelSize: win.smallSize
-            text: win.plotNames.length > 0 ? win.plotSvg
+            text: win.plotNames.length > 0 ? "This plot cannot be drawn: see the bar below."
                 : win.sheet.isConsts ? "The constants have no plots. Go to a sheet to see or make its plots."
                 : win.plotAllNames.length > 0 ? "No plot reads this sheet. Press + Plot to make one."
                 : "This file has no plots yet. Press + Plot to make one."
@@ -6662,6 +6732,24 @@ ApplicationWindow {
             width: 1
             height: parent.height
             color: win.lineColor
+        }
+        // The edge: take hold of it to change the width of the settings.
+        MouseArea {
+            x: -3
+            z: 2
+            width: 7
+            height: parent.height
+            cursorShape: Qt.SplitHCursor
+            property real startX: 0
+            property real startWidth: 0
+            onPressed: function(mouse) {
+                startX = mapToItem(root, mouse.x, 0).x;
+                startWidth = win.plotSettingsWidth;
+            }
+            onPositionChanged: function(mouse) {
+                if (pressed)
+                    win.plotSettingsPref = startWidth - (mapToItem(root, mouse.x, 0).x - startX);
+            }
         }
 
         Text {
@@ -6742,27 +6830,6 @@ ApplicationWindow {
                     }
                 }
 
-                // Why a change was refused.
-                Rectangle {
-                    visible: win.plotProblem.length > 0
-                    width: parent.width
-                    height: problemText.implicitHeight + 16
-                    radius: 6
-                    color: Qt.rgba(win.errorColor.r, win.errorColor.g, win.errorColor.b, 0.12)
-                    border.color: Qt.rgba(win.errorColor.r, win.errorColor.g, win.errorColor.b, 0.5)
-                    Text {
-                        id: problemText
-                        x: 8
-                        y: 8
-                        width: parent.width - 16
-                        wrapMode: Text.Wrap
-                        color: win.errorColor
-                        font.family: win.font.family
-                        font.pixelSize: win.smallSize
-                        text: win.plotProblem
-                    }
-                }
-
                 // The kind.
                 Column {
                     width: parent.width
@@ -6771,10 +6838,16 @@ ApplicationWindow {
                     Flickable {
                         id: tilesFlick
                         width: parent.width
-                        readonly property real tile: Math.floor((width - 10 - 12) / 3)
+                        // Always as at the default width of the pane, so that the tiles keep
+                        // their size as it is dragged: they wrap to more or fewer to a row.
+                        readonly property real tile: Math.floor((Math.round(win.fontSize * 22) - 1 - 28 - 10 - 12) / 3)
+                        readonly property int perRow: Math.max(1, Math.floor((width - 10 + 6) / (tile + 6)))
                         readonly property real tileH: tile * 0.82
-                        // A row and a third, so that there is more to find.
-                        height: tileH * 1.3 + 2
+                        // A row and a third, so that there is more to find, until
+                        // dragged to another height by the grip below.
+                        height: win.kindTilesPref > 0
+                            ? Math.max(tileH * 0.6, Math.min(win.kindTilesPref, kindTiles.height))
+                            : Math.min(tileH * 1.3 + 2, kindTiles.height)
                         contentHeight: kindTiles.height
                         clip: true
                         boundsBehavior: Flickable.StopAtBounds
@@ -6784,7 +6857,7 @@ ApplicationWindow {
                             var at = win.plotKinds.indexOf(win.plotInfo.controls.type || "");
                             if (at < 0 || tileH <= 0)
                                 return;
-                            var top = Math.floor(at / 3) * (tileH + 6);
+                            var top = Math.floor(at / perRow) * (tileH + 6);
                             if (top < contentY)
                                 contentY = top;
                             else if (top + tileH > contentY + height)
@@ -6845,6 +6918,34 @@ ApplicationWindow {
                             }
                         }
                     }
+                    // A grip under the tiles: drag it to show more or fewer.
+                    Item {
+                        width: parent.width
+                        height: 10
+                        Rectangle {
+                            anchors.centerIn: parent
+                            width: 36
+                            height: 3
+                            radius: 2
+                            color: gripArea.containsMouse || gripArea.pressed ? win.accentColor : win.lineColor
+                        }
+                        MouseArea {
+                            id: gripArea
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.SplitVCursor
+                            property real startY: 0
+                            property real startHeight: 0
+                            onPressed: function(mouse) {
+                                startY = mapToItem(settingsColumn, mouse.x, mouse.y).y;
+                                startHeight = tilesFlick.height;
+                            }
+                            onPositionChanged: function(mouse) {
+                                if (pressed)
+                                    win.kindTilesPref = Math.max(1, startHeight + mapToItem(settingsColumn, mouse.x, mouse.y).y - startY);
+                            }
+                        }
+                    }
                 }
 
                 // Where the values come from.
@@ -6852,59 +6953,10 @@ ApplicationWindow {
                     width: parent.width
                     spacing: 6
                     SettingsLabel { text: "Data" }
-                    SettingsField {
-                        width: parent.width
-                        text: win.plotInfo.controls.data || ""
-                        placeholderText: "a sheet, or an expression that gives one"
+                    SettingsText {
+                        value: win.plotInfo.controls.data || ""
+                        placeholderText: "a sheet or expression"
                         onCommitted: function(value) { win.setPlot("data", value) }
-                    }
-                }
-
-                // The columns: one for the labels, any number for the values.
-                Column {
-                    width: parent.width
-                    spacing: 6
-                    readonly property string xName: win.plotInfo.controls.x || win.plotInfo.columns[0] || ""
-                    readonly property var candidates: win.plotInfo.columns.filter(function(c) { return c !== xName; })
-                    readonly property var given: (win.plotInfo.controls.y || "").split(",").map(function(c) { return c.trim(); }).filter(function(c) { return c.length > 0; })
-                    readonly property var current: given.length > 0 ? given : candidates
-                    SettingsLabel { text: "Labels (x)" }
-                    Flow {
-                        width: parent.width
-                        spacing: 6
-                        Repeater {
-                            model: win.plotInfo.columns
-                            SettingsChip {
-                                required property string modelData
-                                required property int index
-                                text: modelData
-                                on: modelData === parent.parent.xName
-                                onClicked: win.setPlot("x", index === 0 ? "" : modelData)
-                            }
-                        }
-                    }
-                    SettingsLabel { text: "Values (y)" }
-                    Flow {
-                        width: parent.width
-                        spacing: 6
-                        Repeater {
-                            model: parent.parent.candidates
-                            SettingsChip {
-                                required property string modelData
-                                text: modelData
-                                tick: true
-                                on: parent.parent.current.indexOf(modelData) >= 0
-                                onClicked: {
-                                    var col = parent.parent;
-                                    var next = col.candidates.filter(function(c) {
-                                        return c === modelData ? col.current.indexOf(c) < 0 : col.current.indexOf(c) >= 0;
-                                    });
-                                    if (next.length === 0)
-                                        return;
-                                    win.setPlot("y", next.length === col.candidates.length ? "" : next.join(", "));
-                                }
-                            }
-                        }
                     }
                 }
 
@@ -6916,8 +6968,174 @@ ApplicationWindow {
                     SettingsField {
                         width: parent.width
                         text: win.plotInfo.controls.title || ""
-                        placeholderText: "none"
+                        placeholderText: ""
                         onCommitted: function(value) { win.setPlot("title", value) }
+                    }
+                }
+
+                // The columns: one for the labels, any number for the values.
+                // Only what the kind of plot takes, and only the columns that
+                // suit each: values must be numbers, and a scatter or bubble
+                // plot's labels too.
+                Column {
+                    id: axes
+                    width: parent.width
+                    spacing: 6
+                    readonly property string kind: win.plotInfo.controls.type || ""
+                    readonly property bool onAxes: ["line", "bar", "candle", "scatter", "area", "stacked", "step", "waterfall", "bubble"].indexOf(kind) >= 0
+                    readonly property bool showX: kind !== "histogram" && kind !== "box"
+                    readonly property bool xNumeric: kind === "scatter" || kind === "bubble"
+                    readonly property var numeric: win.plotInfo.numeric || []
+                    readonly property string xName: win.plotInfo.controls.x || win.plotInfo.columns[0] || ""
+                    readonly property var others: win.plotInfo.columns.filter(function(c) { return c !== xName; })
+                    // The columns offered, kept as they are unless they change, so
+                    // that ticking a control does not make the chips again.
+                    property var xChoices: []
+                    property var candidates: []
+                    function sync() {
+                        var cols = win.plotInfo.columns || [];
+                        // Only a column that leaves another of numbers for the values.
+                        var x = cols.filter(function(c) {
+                            if (xNumeric && numeric.indexOf(c) < 0) return false;
+                            return numeric.some(function(n) { return n !== c; });
+                        });
+                        var y = others.filter(function(c) { return numeric.indexOf(c) >= 0; });
+                        if (JSON.stringify(x) !== JSON.stringify(xChoices)) xChoices = x;
+                        if (JSON.stringify(y) !== JSON.stringify(candidates)) candidates = y;
+                    }
+                    Component.onCompleted: sync()
+                    Connections {
+                        target: win
+                        function onPlotInfoChanged() { axes.sync(); }
+                    }
+                    readonly property var given: (win.plotInfo.controls.y || "").split(",").map(function(c) { return c.trim(); }).filter(function(c) { return c.length > 0; })
+                    readonly property var current: given.length > 0 ? given : candidates
+                    readonly property bool logXOk: ["line", "step", "area", "scatter", "bubble"].indexOf(kind) >= 0 && numeric.indexOf(xName) >= 0
+                    readonly property bool logYOk: ["line", "step", "scatter", "bubble"].indexOf(kind) >= 0
+                    readonly property bool fitOk: ["line", "step", "area", "scatter", "bubble"].indexOf(kind) >= 0
+                    readonly property bool originInX: !!(win.plotInfo.originIn && win.plotInfo.originIn.x)
+                    readonly property bool originInY: !!(win.plotInfo.originIn && win.plotInfo.originIn.y)
+                    readonly property bool cartesian: onAxes || kind === "histogram" || kind === "box"
+                    readonly property bool labelsOk: onAxes || kind === "histogram"
+                    SettingsLabel {
+                        visible: axes.showX
+                        text: axes.onAxes ? "X-axis" : axes.kind === "heatmap" ? "Rows" : "Labels"
+                    }
+                    Flow {
+                        visible: axes.showX
+                        width: parent.width
+                        spacing: 6
+                        Repeater {
+                            model: axes.xChoices
+                            SettingsChip {
+                                required property string modelData
+                                text: modelData
+                                on: modelData === axes.xName
+                                onClicked: win.setPlot("x", modelData === win.plotInfo.columns[0] ? "" : modelData)
+                            }
+                        }
+                    }
+                    Flow {
+                        width: parent.width
+                        spacing: 6
+                        SettingsCheck {
+                            visible: axes.showX && axes.onAxes && axes.numeric.indexOf(axes.xName) >= 0
+                            flag: "units"
+                            axis: "x"
+                            text: "Units"
+                        }
+                        SettingsCheck {
+                            visible: axes.showX && axes.onAxes
+                            flag: "ticks"
+                            axis: "x"
+                            text: "Ticks"
+                        }
+                        SettingsCheck {
+                            visible: axes.showX && axes.logXOk
+                            flag: "logx"
+                            text: "Log"
+                        }
+                        SettingsCheck {
+                            // Not offered where the origin is in view already, unless it is on.
+                            visible: axes.showX && axes.onAxes && axes.numeric.indexOf(axes.xName) >= 0 && (!axes.originInX || on)
+                            flag: "origin"
+                            axis: "x"
+                            text: "Origin"
+                        }
+                    }
+                    SettingsLabel {
+                        text: axes.onAxes ? "Y-axis" : axes.kind === "heatmap" ? "Columns" : "Values"
+                    }
+                    Flow {
+                        width: parent.width
+                        spacing: 6
+                        Repeater {
+                            model: axes.candidates
+                            SettingsChip {
+                                required property string modelData
+                                text: modelData
+                                on: axes.current.indexOf(modelData) >= 0
+                                onClicked: {
+                                    var next = axes.candidates.filter(function(c) {
+                                        return c === modelData ? axes.current.indexOf(c) < 0 : axes.current.indexOf(c) >= 0;
+                                    });
+                                    if (next.length === 0)
+                                        return;
+                                    // All of them is left unsaid, unless there are columns of text
+                                    // that the plot would then take for values.
+                                    win.setPlot("y", next.length === axes.others.length ? "" : next.join(", "));
+                                }
+                            }
+                        }
+                    }
+                    Flow {
+                        width: parent.width
+                        spacing: 6
+                        SettingsCheck {
+                            visible: axes.cartesian
+                            flag: "units"
+                            axis: "y"
+                            text: "Units"
+                        }
+                        SettingsCheck {
+                            visible: axes.cartesian
+                            flag: "ticks"
+                            axis: "y"
+                            text: "Ticks"
+                        }
+                        SettingsCheck {
+                            visible: axes.logYOk
+                            flag: "logy"
+                            text: "Log"
+                        }
+                        SettingsCheck {
+                            visible: axes.cartesian && (!axes.originInY || on)
+                            flag: "origin"
+                            axis: "y"
+                            text: "Origin"
+                        }
+                    }
+                    SettingsLabel {
+                        visible: axes.fitOk
+                        text: "Curve fit"
+                    }
+                    Flow {
+                        visible: axes.fitOk
+                        width: parent.width
+                        spacing: 6
+                        Repeater {
+                            model: ["basic", "straight", "quadratic", "bezier"]
+                            SettingsChip {
+                                required property string modelData
+                                readonly property string fit: win.plotInfo.controls.fit || ""
+                                text: modelData.charAt(0).toUpperCase() + modelData.slice(1)
+                                // Left unsaid, a line is bezier and any other plot is basic.
+                                readonly property string shown: fit === "true" ? "straight" : fit === "false" ? "basic"
+                                    : fit !== "" ? fit : axes.kind === "line" ? "bezier" : "basic"
+                                on: shown === modelData
+                                onClicked: win.setPlot("fit", modelData)
+                            }
+                        }
                     }
                 }
 
@@ -6925,36 +7143,308 @@ ApplicationWindow {
                 Column {
                     width: parent.width
                     spacing: 6
-                    SettingsLabel { text: "Size and options" }
+                    SettingsLabel {
+                        visible: axes.labelsOk || ["line", "bar", "area", "stacked", "step", "scatter", "histogram", "candle"].indexOf(axes.kind) >= 0
+                        text: "Options"
+                    }
+                    Flow {
+                        width: parent.width
+                        spacing: 6
+                        SettingsCheck {
+                            visible: axes.labelsOk
+                            flag: "labels"
+                            onValue: "both"
+                            text: "Coordinates"
+                        }
+                        SettingsCheck {
+                            visible: ["line", "bar", "area", "stacked", "step", "scatter", "histogram"].indexOf(axes.kind) >= 0
+                            flag: "legend"
+                            automatic: axes.current.length > 1 ? 1 : 0
+                            text: "Legend"
+                        }
+                    }
                     Row {
-                        spacing: 8
-                        SettingsField {
-                            width: (settingsColumn.width - 8) / 2
-                            text: win.plotInfo.controls.width || ""
-                            placeholderText: "width 640"
-                            onCommitted: function(value) { win.setPlot("width", value) }
-                        }
-                        SettingsField {
-                            width: (settingsColumn.width - 8) / 2
-                            text: win.plotInfo.controls.height || ""
-                            placeholderText: "height 360"
-                            onCommitted: function(value) { win.setPlot("height", value) }
-                        }
-                    }
-                    SettingsField {
                         visible: win.plotInfo.controls.type === "candle"
-                        width: parent.width
-                        text: win.plotInfo.controls.k || ""
-                        placeholderText: "k: standard deviations in the body (1)"
-                        onCommitted: function(value) { win.setPlot("k", value) }
+                        spacing: 8
+                        Text {
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: "k (std devs in body)"
+                            color: win.mutedColor
+                            font.family: win.font.family
+                            font.pixelSize: win.smallSize
+                        }
+                        SettingsField {
+                            width: Math.round(win.smallSize * 3.6) + 20
+                            maximumLength: 3
+                            inputMethodHints: Qt.ImhDigitsOnly
+                            validator: IntValidator { bottom: 1; top: 999 }
+                            text: win.plotInfo.controls.k || ""
+                            placeholderText: "1"
+                            onCommitted: function(value) { win.setPlot("k", value) }
+                        }
                     }
-                    SettingsField {
+                    Row {
                         visible: win.plotInfo.controls.type === "histogram"
-                        width: parent.width
-                        text: win.plotInfo.controls.bins || ""
-                        placeholderText: "bins: how many (automatic)"
-                        onCommitted: function(value) { win.setPlot("bins", value) }
+                        spacing: 8
+                        Text {
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: "Bins"
+                            color: win.mutedColor
+                            font.family: win.font.family
+                            font.pixelSize: win.smallSize
+                        }
+                        SettingsField {
+                            width: Math.round(win.smallSize * 3.6) + 20
+                            maximumLength: 3
+                            inputMethodHints: Qt.ImhDigitsOnly
+                            validator: IntValidator { bottom: 1; top: 999 }
+                            text: win.plotInfo.controls.bins || ""
+                            placeholderText: "auto"
+                            onCommitted: function(value) { win.setPlot("bins", value) }
+                        }
                     }
+                }
+
+                // The colours: a palette as a tile of its swatches, the first the major one.
+                Column {
+                    width: parent.width
+                    spacing: 6
+                    SettingsLabel { text: "Palette" }
+                    Flickable {
+                        id: palFlick
+                        width: parent.width
+                        readonly property real tileH: Math.round(tilesFlick.tile * 0.62)
+                        // A row and a half, so that there is more to find, until
+                        // dragged to another height by the grip below.
+                        height: win.palettePref > 0
+                            ? Math.max(tileH * 0.6, Math.min(win.palettePref, palTiles.height))
+                            : Math.min(tileH * 1.5 + 3, palTiles.height)
+                        contentHeight: palTiles.height
+                        clip: true
+                        boundsBehavior: Flickable.StopAtBounds
+                        ScrollBar.vertical: ScrollBar { policy: ScrollBar.AlwaysOn; width: 8 }
+                        Flow {
+                            id: palTiles
+                            width: palFlick.width - 10
+                            spacing: 6
+                            Repeater {
+                            model: win.plotInfo.palettes || []
+                            Rectangle {
+                                id: palBox
+                                required property var modelData
+                                readonly property bool on: (win.plotInfo.controls.palette || "classic") === modelData.name
+                                width: tilesFlick.tile
+                                height: Math.round(tilesFlick.tile * 0.62)
+                                radius: 8
+                                color: on ? Qt.rgba(win.accentColor.r, win.accentColor.g, win.accentColor.b, 0.2)
+                                    : palArea.containsMouse ? Qt.rgba(win.textColor.r, win.textColor.g, win.textColor.b, 0.09) : win.panelColor
+                                border.width: on ? 2 : 1
+                                border.color: on ? win.accentColor : win.lineColor
+                                Behavior on color { ColorAnimation { duration: 120 } }
+                                Row {
+                                    anchors.horizontalCenter: parent.horizontalCenter
+                                    y: 8
+                                    spacing: 2
+                                    Repeater {
+                                        model: palBox.modelData.colours
+                                        Rectangle {
+                                            required property string modelData
+                                            required property int index
+                                            width: Math.floor((palBox.width - 24) / 8)
+                                            // The first, the major colour, is the tallest.
+                                            height: index === 0 ? 18 : 12
+                                            y: index === 0 ? 0 : 6
+                                            radius: 2
+                                            color: modelData
+                                        }
+                                    }
+                                }
+                                Text {
+                                    anchors.horizontalCenter: parent.horizontalCenter
+                                    anchors.bottom: parent.bottom
+                                    anchors.bottomMargin: 5
+                                    color: palBox.on ? win.accentColor : win.mutedColor
+                                    font.family: win.font.family
+                                    font.pixelSize: win.smallSize - 1
+                                    text: palBox.modelData.name
+                                }
+                                MouseArea {
+                                    id: palArea
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: win.setPlot("palette", palBox.modelData.name === "classic" ? "" : palBox.modelData.name)
+                                }
+                            }
+                        }
+                        }
+                    }
+                    // A grip under the palettes: drag it to show more or fewer.
+                    Item {
+                        width: parent.width
+                        height: 10
+                        Rectangle {
+                            anchors.centerIn: parent
+                            width: 36
+                            height: 3
+                            radius: 2
+                            color: palGrip.containsMouse || palGrip.pressed ? win.accentColor : win.lineColor
+                        }
+                        MouseArea {
+                            id: palGrip
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.SplitVCursor
+                            property real startY: 0
+                            property real startHeight: 0
+                            onPressed: function(mouse) {
+                                startY = mapToItem(settingsColumn, mouse.x, mouse.y).y;
+                                startHeight = palFlick.height;
+                            }
+                            onPositionChanged: function(mouse) {
+                                if (pressed)
+                                    win.palettePref = Math.max(1, startHeight + mapToItem(settingsColumn, mouse.x, mouse.y).y - startY);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // A field for an expression that can be opened out over several lines, with
+    // Ctrl+V (the Control key itself, on a Mac) or the arrow at its right. It is
+    // kept on one line in the file: opened out, each `|>` starts a line, and
+    // the lines are joined again when it is left (or with Ctrl+Enter).
+    component SettingsText: Item {
+        id: box
+        property string value: ""
+        property string placeholderText: ""
+        property bool multi: false
+        signal committed(string value)
+        function joined(t) { return t.replace(/\s*\n\s*/g, " ").trim(); }
+        function spread(t) { return t.replace(/\s*\|>\s*/g, "\n|> ").replace(/^\n/, ""); }
+        function load() { edit.text = multi ? spread(value) : joined(value); }
+        function commit() {
+            var t = joined(edit.text);
+            if (t !== joined(value))
+                committed(t);
+        }
+        function toggle() {
+            var t = joined(edit.text);
+            multi = !multi;
+            edit.text = multi ? spread(t) : t;
+            edit.forceActiveFocus();
+        }
+        onValueChanged: if (!edit.activeFocus) load()
+        Component.onCompleted: load()
+        width: parent ? parent.width : 0
+        height: multi ? Math.max(win.fontSize * 7, edit.contentHeight + 16) : Math.round(win.smallSize * 1.3) + 16
+        Rectangle {
+            anchors.fill: parent
+            radius: 6
+            color: win.panelColor
+            border.width: edit.activeFocus ? 2 : 1
+            border.color: edit.activeFocus ? win.accentColor : win.lineColor
+        }
+        TextArea {
+            id: edit
+            anchors.fill: parent
+            anchors.rightMargin: 24
+            background: null
+            selectByMouse: true
+            wrapMode: box.multi ? TextEdit.Wrap : TextEdit.NoWrap
+            color: win.textColor
+            placeholderText: box.placeholderText
+            placeholderTextColor: win.mutedColor
+            font.family: win.font.family
+            font.features: win.font.features
+            font.pixelSize: win.smallSize
+            leftPadding: 10
+            rightPadding: 4
+            topPadding: 7
+            bottomPadding: 7
+            Keys.onPressed: function(event) {
+                if (event.key === Qt.Key_V && (event.modifiers & Qt.MetaModifier)) {
+                    box.toggle();
+                    event.accepted = true;
+                } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+                    // One line: Enter says it. Several: Ctrl+Enter does, and Enter is a new line.
+                    if (!box.multi || (event.modifiers & (Qt.ControlModifier | Qt.MetaModifier))) {
+                        box.commit();
+                        event.accepted = true;
+                    }
+                }
+            }
+            onActiveFocusChanged: if (!activeFocus) box.commit()
+        }
+        Text {
+            x: parent.width - 20
+            y: 6
+            text: box.multi ? "\u2303" : "\u2304"
+            color: win.mutedColor
+            font.pixelSize: win.smallSize + 2
+            MouseArea {
+                anchors.fill: parent
+                anchors.margins: -4
+                cursorShape: Qt.PointingHandCursor
+                onClicked: box.toggle()
+            }
+        }
+    }
+
+    // A box to tick for a control of the plot that is true or false.
+    component SettingsCheck: Rectangle {
+        id: check
+        property string flag
+        property string text
+        // For a control of an axis: which, `x` or `y`; it is `x`, `y` or `both`.
+        property string axis: ""
+        // What turns on one that is not of an axis: `true`, or `both`.
+        property string onValue: "true"
+        // For one the plot decides when it is left out: what it decides, 1 or 0.
+        property int automatic: -1
+        readonly property string raw: win.plotInfo.controls[flag] || ""
+        readonly property bool hasX: raw === "both" || raw === "true" || raw === "x"
+        readonly property bool hasY: raw === "both" || raw === "true" || raw === "y"
+        readonly property bool on: axis === "x" ? hasX : axis === "y" ? hasY
+            : raw === "" && automatic >= 0 ? automatic === 1 : (raw === "true" || raw === "both")
+        // All one length, that of the longest label, and set against the left.
+        TextMetrics {
+            id: longest
+            font.family: win.font.family
+            font.pixelSize: win.smallSize - 1
+            text: "Coordinates"
+        }
+        width: Math.ceil(longest.advanceWidth) + 24
+        height: Math.round(win.smallSize * 1.9)
+        radius: 6
+        color: on ? Qt.rgba(win.accentColor.r, win.accentColor.g, win.accentColor.b, 0.22)
+            : toggleArea.containsMouse ? Qt.rgba(win.textColor.r, win.textColor.g, win.textColor.b, 0.09) : win.panelColor
+        border.width: 1
+        border.color: on ? win.accentColor : win.lineColor
+        Behavior on color { ColorAnimation { duration: 120 } }
+                Text {
+            anchors.centerIn: parent
+            color: check.on ? win.accentColor : win.textColor
+            font.family: win.font.family
+            font.pixelSize: win.smallSize - 1
+            text: check.text
+        }
+        MouseArea {
+            id: toggleArea
+            anchors.fill: parent
+            hoverEnabled: true
+            cursorShape: Qt.PointingHandCursor
+            onClicked: {
+                if (check.axis !== "") {
+                    var x = check.axis === "x" ? !check.hasX : check.hasX;
+                    var y = check.axis === "y" ? !check.hasY : check.hasY;
+                    win.setPlot(check.flag, x && y ? "both" : x ? "x" : y ? "y" : "");
+                } else if (check.automatic >= 0) {
+                    win.setPlot(check.flag, check.on ? "false" : "true");
+                } else {
+                    win.setPlot(check.flag, check.on ? "" : check.onValue);
                 }
             }
         }
@@ -6998,7 +7488,15 @@ ApplicationWindow {
             }
         }
         property string committedText: ""
-        onActiveFocusChanged: if (activeFocus) committedText = text.trim()
+        onActiveFocusChanged: {
+            if (activeFocus)
+                committedText = text.trim();
+            else
+                cursorPosition = 0;
+        }
+        // A long text is shown from its start, not scrolled to its end.
+        onTextChanged: if (!activeFocus) cursorPosition = 0
+        horizontalAlignment: TextInput.AlignLeft
     }
 
     // A column to choose, as a pill; ticked ones are filled.

@@ -71,7 +71,7 @@ The trend:
 - The SVG is in the page itself, in both the Markdown and the HTML, with no other files. Its ink is the page's text colour and its background is clear, so it follows a light or dark theme.
 - A mistake in a plot is reported at its line, in the document or in the file it is in.
 
-`examples/plot-report.md` has one of each kind.
+`examples/plots-report.md` has one of each kind.
 
 A tool that does not know Omasheet shows the block as code and the braces as they are, so a report stays readable on GitHub.
 

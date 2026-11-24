@@ -59,9 +59,11 @@ fn units_in_the_heads(grid: &mut Grid) {
         let Ok(parsed) = siquant::Unit::parse(&unit, siquant::Scope::Any) else {
             continue;
         };
-        let Some(kind) = siquant::Registry::builtin().infer_type(parsed.dims()) else {
-            continue;
-        };
+        // A dimension with no kind of its own, as money for each kWh, is a
+        // plain `Quantity`.
+        let kind = siquant::Registry::builtin()
+            .infer_type(parsed.dims())
+            .map_or_else(|| "Quantity".to_string(), |k| k.name().to_string());
         // Only numbers, or nothing, under it.
         let plain = grid.rows.iter().all(|row| match row.get(c) {
             None | Some(Datum::Empty) => true,
@@ -72,7 +74,7 @@ fn units_in_the_heads(grid: &mut Grid) {
             continue;
         }
         grid.headers[c] = name;
-        kinds[c] = Some(format!("{}[{unit}]", kind.name()));
+        kinds[c] = Some(format!("{kind}[{unit}]"));
     }
     if kinds.iter().any(Option::is_some) {
         grid.kinds = kinds;

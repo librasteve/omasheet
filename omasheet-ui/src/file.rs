@@ -858,7 +858,13 @@ impl qobject::File {
         let name = name.to_string();
         let doc = &self.rust().doc;
         let controls = doc.plot_controls(&name).unwrap_or_default();
-        QString::from(&json::plot_info(&controls, &doc.plot_columns(&name), &doc.plot_fit(&name)))
+        QString::from(&json::plot_info(
+            &controls,
+            &doc.plot_columns(&name),
+            &doc.plot_numeric_columns(&name),
+            &doc.plot_fit(&name),
+            doc.plot_origin_in(&name),
+        ))
     }
 
     fn add_plot(self: Pin<&mut Self>, name: &QString, kind: &QString, data: &QString) -> QString {
@@ -895,6 +901,13 @@ impl qobject::File {
                     .chars()
                     .filter(|c| !matches!(c, '\'' | '"' | '<' | '>' | '&'))
                     .collect();
+                // The note under the title is said in the bar, as the `desc` of the drawing.
+                let svg = match svg.find("<text class=\"note\"").and_then(|at| {
+                    svg[at..].find("</text>").map(|end| (at, at + end + "</text>".len()))
+                }) {
+                    Some((at, end)) => format!("{}{}", &svg[..at], &svg[end..]),
+                    None => svg,
+                };
                 svg.replace("currentColor", &self.theme_foreground().to_string())
                     .replace("font-family=\"sans-serif\"", &format!("font-family=\"{family}\""))
             }

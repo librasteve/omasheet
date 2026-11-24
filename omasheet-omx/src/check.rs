@@ -60,6 +60,23 @@ pub struct Plot {
     pub height: Option<u32>,
     pub k: Option<f64>,
     pub bins: Option<usize>,
+    /// Data labels, axis tick marks, logarithmic axes, a fitted line, and
+    /// the units of the columns on the axes and in the legend.
+    /// Each of the first three is for the x axis and the y axis.
+    pub labels: (bool, bool),
+    pub ticks: (bool, bool),
+    pub units: (bool, bool),
+    /// The axis reaches zero.
+    pub origin: (bool, bool),
+    pub logx: bool,
+    pub logy: bool,
+    /// `straight`, `quadratic` or `bezier`; empty for none.
+    pub fit: String,
+    /// `None` is the plot's own choice: a legend where there are several
+    /// columns of values.
+    pub legend: Option<bool>,
+    /// The palette its colours come from; empty for the first.
+    pub palette: String,
     /// The sheet its `data` is a view of, where it is known: its parent.
     pub sheet: Option<usize>,
 }
@@ -206,7 +223,9 @@ impl Column {
 /// the parser reads it, `m.s^-1`, where the format has `^`.
 fn head_unit_text(unit: &impl ToString, number: Option<crate::colfmt::SciFormat>) -> String {
     let text = unit.to_string();
-    if number.is_some_and(|n| n.ascii) {
+    if let Some(sub) = number.and_then(|n| n.sub) {
+        crate::colfmt::sub_unit_text(&text, sub)
+    } else if number.is_some_and(|n| n.ascii) {
         text
     } else {
         crate::colfmt::pretty_unit(&text)
@@ -946,6 +965,56 @@ enum Rule {
 /// beside it means: days for a `Date`, seconds for a `Time` or a
 /// `Datetime`. That is the unit the step is then written in, so it is the
 /// unit the terms must be compared in — not the finer one they are held in.
+/// A seed written as a quantity, `5m` or `-0.5s`: value, uncertainty, unit.
+fn seed_quantity(e: &Expr) -> Option<(f64, f64, siquant::Unit)> {
+    match &e.kind {
+        ExprKind::Lit(Lit::Quantity(v, s, u)) => Some((*v, *s, u.clone())),
+        ExprKind::Unary(UnOp::Neg, inner) => seed_quantity(inner).map(|(v, s, u)| (-v, s, u)),
+        _ => None,
+    }
+}
+
+/// The rule of a sequence of quantities of one dimension, `1m, 2m ...` or
+/// `0s, 0.5s ...`: a constant step added, or a constant ratio multiplied,
+/// in the unit of the first term.
+fn quantity_rule(seeds: &[Expr], span: Span) -> Option<Rule> {
+    let quants: Vec<(f64, f64, siquant::Unit)> =
+        seeds.iter().map(seed_quantity).collect::<Option<_>>()?;
+    let unit = quants[0].2.clone();
+    if quants.iter().any(|q| q.2.dims() != unit.dims()) {
+        return None;
+    }
+    let base: Vec<f64> = quants.iter().map(|q| q.0 * q.2.factor()).collect();
+    let at = |kind| Expr { kind, span };
+    let back = || at(ExprKind::Back(1));
+    let by = |op, v: f64, u: &siquant::Unit| {
+        let lit = match op {
+            BinOp::Add => Lit::Quantity(v / u.factor(), 0.0, u.clone()),
+            _ => Lit::Float(v),
+        };
+        Rule::By(at(ExprKind::Binary(
+            op,
+            Box::new(back()),
+            Box::new(at(ExprKind::Lit(lit))),
+        )))
+    };
+    let close = |a: f64, b: f64| (a - b).abs() <= 1e-9 * a.abs().max(b.abs()).max(1e-300);
+    if base.len() == 1 {
+        return Some(by(BinOp::Add, unit.factor(), &unit));
+    }
+    let diff = base[1] - base[0];
+    if base.windows(2).all(|w| close(w[1] - w[0], diff)) {
+        return Some(by(BinOp::Add, diff, &unit));
+    }
+    if base[0] != 0.0 {
+        let ratio = base[1] / base[0];
+        if base.windows(2).all(|w| w[0] != 0.0 && close(w[1] / w[0], ratio)) {
+            return Some(by(BinOp::Mul, ratio, &unit));
+        }
+    }
+    None
+}
+
 fn seed_time(e: &Expr) -> Option<i64> {
     match &e.kind {
         ExprKind::Lit(Lit::Date(d)) => Some(*d as i64),
@@ -1663,6 +1732,11 @@ impl<'a> Checker<'a> {
         let mut data: Option<(Node, Ty, Span)> = None;
         let (mut x, mut y, mut title) = (None, Vec::new(), None);
         let (mut width, mut height, mut k, mut bins) = (None, None, None, None);
+        let mut flags = [false; 2];
+        let mut fit = "";
+        let mut axis_flags = [(false, false); 4];
+        let mut legend = None;
+        let mut palette = "";
         let mut seen: Vec<&str> = Vec::new();
         for c in &decl.controls {
             if !PLOT_KEYS.split(", ").any(|key| key == c.key) {
@@ -1732,6 +1806,44 @@ impl<'a> Checker<'a> {
                         format!("`{}` is a whole number of pixels, 100 to 4000", c.key),
                     ),
                 },
+                key if crate::file::PLOT_FLAGS.contains(&key) => match c.value.as_str() {
+                    "true" | "false" => {
+                        let on = c.value == "true";
+                        match key {
+                            "logx" => flags[0] = on,
+                            "logy" => flags[1] = on,
+                            _ => legend = Some(on),
+                        }
+                    }
+                    _ => self.err(c.value_span, format!("`{key}` is `true` or `false`")),
+                },
+                "palette" => match crate::file::PLOT_PALETTES.iter().find(|p| **p == c.value) {
+                    Some(name) => palette = name,
+                    None => self.err(
+                        c.value_span,
+                        format!("`palette` is {}", crate::file::PLOT_PALETTES.join(", ")),
+                    ),
+                },
+                "fit" => match crate::file::fit_kind(&c.value) {
+                    Some(kind) => fit = kind,
+                    None => self.err(
+                        c.value_span,
+                        format!("`fit` is {}", crate::file::PLOT_FITS),
+                    ),
+                },
+                key if crate::file::PLOT_AXIS_FLAGS.contains(&key) => {
+                    match crate::file::axis_flag(&c.value) {
+                        Some(on) => {
+                            if let Some(at) = crate::file::PLOT_AXIS_FLAGS.iter().position(|f| *f == key) {
+                                axis_flags[at] = on;
+                            }
+                        }
+                        None => self.err(
+                            c.value_span,
+                            format!("`{key}` is `x`, `y`, `both` or `false`"),
+                        ),
+                    }
+                }
                 "bins" => match c.value.parse::<usize>() {
                     Ok(n) if (1..=200).contains(&n) => bins = Some(n),
                     _ => self.err(c.value_span, "`bins` is a whole number, 1 to 200"),
@@ -1815,6 +1927,15 @@ impl<'a> Checker<'a> {
                 height,
                 k,
                 bins,
+                labels: axis_flags[0],
+                ticks: axis_flags[1],
+                units: axis_flags[2],
+                origin: axis_flags[3],
+                logx: flags[0],
+                logy: flags[1],
+                fit: fit.to_string(),
+                legend,
+                palette: palette.to_string(),
                 sheet: parent,
             });
         }
@@ -2419,6 +2540,19 @@ impl<'a> Checker<'a> {
                         .or_else(|| siquant::Unit::parse("s", siquant::Scope::Any).ok()),
                     _ => None,
                 };
+                // A column of pence or cents reads a bare number as a hundredth.
+                let bare_scale = match declared {
+                    Some(S::Quantity(_)) => decl
+                        .schema
+                        .iter()
+                        .find(|l| l.name == self.sheets[t].cols[c].name)
+                        .and_then(|l| match &l.format {
+                            Some(Format::Quantity(q)) => q.number.and_then(|n| n.sub),
+                            _ => None,
+                        })
+                        .map_or(1.0, |_| 0.01),
+                    _ => 1.0,
+                };
                 // A column of booleans also reads its own two symbols.
                 let symbols = match declared {
                     Some(S::Boolean) => decl
@@ -2463,6 +2597,7 @@ impl<'a> Checker<'a> {
                             cell.span,
                             declared,
                             column_unit.as_ref(),
+                            bare_scale,
                             symbols,
                         ) {
                             Some(lit) => {
@@ -2836,6 +2971,9 @@ impl<'a> Checker<'a> {
         for seed in seeds {
             let (node, s) = self.lower(seed, sc);
             ty = match (&ty, &s) {
+                // Seconds written as a quantity and a duration are both time.
+                (Ty::Scalar(S::Duration), Ty::Scalar(S::Quantity(_)))
+                | (Ty::Scalar(S::Quantity(_)), Ty::Scalar(S::Duration)) => Ty::Scalar(S::Duration),
                 (Ty::Scalar(x), Ty::Scalar(y)) => match x.join(*y) {
                     Some(j) => Ty::Scalar(j),
                     None => {
@@ -2855,8 +2993,14 @@ impl<'a> Checker<'a> {
         // Which way the sequence runs, for a numeric limit.
         let nums: Vec<Dec> = seeds.iter().filter_map(seed_num).collect();
         let times: Vec<i64> = seeds.iter().filter_map(seed_time).collect();
-        let descends =
-            (nums.len() > 1 && nums[1] < nums[0]) || (times.len() > 1 && times[1] < times[0]);
+        let quants: Vec<f64> = seeds
+            .iter()
+            .filter_map(seed_quantity)
+            .map(|(v, _, u)| v * u.factor())
+            .collect();
+        let descends = (nums.len() > 1 && nums[1] < nums[0])
+            || (times.len() > 1 && times[1] < times[0])
+            || (quants.len() > 1 && quants[1] < quants[0]);
         let body = match self.seq_limit(limit, rule_node, descends, span, sc) {
             Some(node) => node,
             None => return fail,
@@ -2928,6 +3072,9 @@ impl<'a> Checker<'a> {
             return None;
         }
         if let Some(rule) = rat_rule(seeds, span) {
+            return Some(rule);
+        }
+        if let Some(rule) = quantity_rule(seeds, span) {
             return Some(rule);
         }
         let nums: Option<Vec<Dec>> = seeds.iter().map(seed_num).collect();
@@ -3009,7 +3156,9 @@ impl<'a> Checker<'a> {
         let ordered = match stop_ty {
             Ty::Any => true,
             Ty::Scalar(s) => {
-                s.is_numeric() || matches!(s, S::Any | S::Date | S::Time | S::Datetime)
+                s.is_numeric()
+                    || s.is_quantity()
+                    || matches!(s, S::Any | S::Date | S::Time | S::Datetime | S::Duration)
             }
             _ => false,
         };
@@ -3153,6 +3302,7 @@ impl<'a> Checker<'a> {
         span: Span,
         declared: Option<S>,
         column: Option<&siquant::Unit>,
+        bare_scale: f64,
         symbols: Option<(char, char)>,
     ) -> Option<Lit> {
         // A cell of an `.omx` file may hold a quantity or a scale (D229).
@@ -3271,7 +3421,7 @@ impl<'a> Checker<'a> {
                 ),
                 S::Quantity(q),
             ) => match crate::convert::convert(&l, S::Scientific) {
-                Ok(Lit::Scientific(v, s)) => match crate::units::dress(v, s, None, q, column) {
+                Ok(Lit::Scientific(v, s)) => match crate::units::dress(v * bare_scale, s * bare_scale, None, q, column) {
                     Ok(Some((v, s, u))) => Some(Lit::Quantity(v, s, u)),
                     _ => Some(l),
                 },
@@ -3812,9 +3962,10 @@ impl<'a> Checker<'a> {
             BinOp::Range | BinOp::RangeEx | BinOp::RangeFrom | BinOp::RangeBoth => {
                 for (ty, e) in [(&lty, l), (&rty, r)] {
                     if !whole_enough(ty, e) {
-                        self.err(
+                        self.err_help(
                             e.span,
                             format!("the ends of a range must be Int, found {}", ty.describe()),
+                            "to step through quantities, decimals, dates or text, write a sequence in a computed column, such as `1m, 2m ... 10m` or `0s, 0.5s ... 12s`",
                         );
                         return fail;
                     }

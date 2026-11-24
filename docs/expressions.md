@@ -574,6 +574,8 @@ given start the column and the rest follow a rule.
 | `'Jan', 'Feb' ... Inf` | the months of the year |
 | `'Jan-2026', 'Apr-2026' ... Inf` | quarters, carrying into the year |
 | `'AY' ... 'BA'` | AY, AZ, BA, then empty |
+| `'α' ... 'ω'` | the Greek letters, without the final `ς`; text that ends in a letter or sign beyond ASCII goes on by one place in Unicode's order, so `'♈' ... '♓'` is the twelve signs of the zodiac |
+| `'α' ... 'ω'` | the Greek letters, without the final `ς`; text that ends in a letter or sign beyond ASCII goes on by one place in Unicode's order, so `'♈' ... '♓'` is the twelve signs of the zodiac |
 | `2025-01-01, 2025-01-08 ... Inf` | every seventh day |
 | `2025-01-01, 2025-02-01 ... Inf` | the first of each month |
 | `2025-01-31, 2025-02-28 ... Inf` | the last day of each month |

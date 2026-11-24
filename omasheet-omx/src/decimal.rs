@@ -155,8 +155,16 @@ impl Dec {
         }
     }
 
+    /// The nearest `f64`. Both parts are exact as doubles up to 2^53 and
+    /// `1e22`, and one division then rounds once; past them the digits are
+    /// read as text, which rounds the whole number once and not twice (a
+    /// number of 17 digits, `0.23800000000000002`, would lose its last).
     pub fn to_f64(self) -> f64 {
-        self.unscaled as f64 / 10f64.powi(self.scale)
+        const EXACT: u128 = 1 << 53;
+        if self.unscaled.unsigned_abs() <= EXACT && (0..=22).contains(&self.scale) {
+            return self.unscaled as f64 / 10f64.powi(self.scale);
+        }
+        format!("{}e-{}", self.unscaled, self.scale).parse().unwrap_or_else(|_| self.unscaled as f64 / 10f64.powi(self.scale))
     }
 
     /// The shortest decimal that reads back as the same `f64`. `None` for an

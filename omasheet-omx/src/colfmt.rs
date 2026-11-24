@@ -302,6 +302,21 @@ impl QuantityFormat {
     }
 }
 
+/// A unit of money as a column of pence or cents shows it: `GBP.kWh^-1` is
+/// `p⋅kWh⁻¹` and `USD` is `¢`. `sub` is the `p` or `c` the format has.
+pub fn sub_unit_text(unit: &str, sub: char) -> String {
+    let (code, rest) = unit.split_once('.').map_or((unit, None), |(c, r)| (c, Some(r)));
+    let mark = match (sub, code) {
+        ('p', _) => "p",
+        (_, "USD") => "¢",
+        _ => "c",
+    };
+    match rest {
+        Some(rest) => format!("{mark}⋅{}", pretty_unit(rest)),
+        None => mark.to_string(),
+    }
+}
+
 /// Whether `symbol` is a metric unit as the registry has it, with no prefix
 /// of its own, and takes one: `g` and `m`, not `km` or `in`.
 fn takes_si_prefixes(symbol: &str) -> bool {
@@ -381,6 +396,9 @@ pub struct SciFormat {
     /// `$>`: as `$`, with the sign after the number, `144¥`; `_` then sets it
     /// apart by a space, `144 ¥`.
     pub sign_after: bool,
+    /// `$p` or `$c`: money in a hundredth of its unit, `24.5p` for pence and
+    /// `3.5¢` for cents: the letter after the `$`.
+    pub sub: Option<char>,
     /// `-`: on the left of its width, rather than the right.
     pub left: bool,
     /// `+`: a sign on every number, `+` on one that is not negative.
@@ -458,6 +476,12 @@ impl SciFormat {
                 f.sign_after = true;
                 i += 1;
             }
+        }
+        // `p` or `c`: a hundredth of the money, pence or cents; with `$` in
+        // each row, and without it the unit is shown once in the head.
+        if quantity && let Some(&c) = chars.get(i).filter(|c| matches!(c, 'p' | 'c')) {
+            f.sub = Some(c);
+            i += 1;
         }
         if chars.get(i) == Some(&'_') {
             f.gap = true;
@@ -582,6 +606,9 @@ impl fmt::Display for SciFormat {
             }
         } else if self.unit_down {
             f.write_str("v")?;
+        }
+        if let Some(c) = self.sub {
+            write!(f, "{c}")?;
         }
         if self.gap {
             f.write_str("_")?;
@@ -1013,6 +1040,17 @@ mod tests {
         // A number format's error is placed after the unit and the `;`.
         let e = Format::parse("g; x", ty).unwrap_err();
         assert_eq!(e.at, 3, "{e:?}");
+    }
+
+    #[test]
+    fn a_dollar_sign_may_show_pence_or_cents() {
+        let money = QId::from_name("Currency").unwrap();
+        let f = QuantityFormat::parse("GBP; $p", money).unwrap();
+        assert_eq!(f.number.unwrap().sub, Some('p'));
+        assert_eq!(f.to_string(), "GBP; $p");
+        let f = QuantityFormat::parse("USD; $c.1f", money).unwrap();
+        assert_eq!(f.number.unwrap().sub, Some('c'));
+        assert_eq!(f.to_string(), "USD; $c.1f");
     }
 
     #[test]
