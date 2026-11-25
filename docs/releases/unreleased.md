@@ -7,6 +7,14 @@ Notes for the release after 0.1.12, kept here until it is cut. The items marked 
 - **One app, many files.** A new file (Ctrl+N) or an opened one (Ctrl+O) is a window of its own in the running app, as in most apps, and Cmd+Q on a Mac closes them all. On Windows and Linux a second launch hands its file to the running app, which opens it in a new window; `OMASHEET_NEW_INSTANCE` starts a separate copy. A file already open is brought forward. On Windows and macOS there is a File menu.
 - **Copy sheet, Paste sheet:** in a sheet tab's right-click menu. A sheet goes on the clipboard as its own text and is pasted, as one undo step, into another file or the same one, as `Name_001` where the name is taken; a footer warning names the constants, functions and sheets its formulas use that the file lacks.
 
+## Plots
+
+- **`plot Name` declares a plot** of a sheet in the file, with `key: value` controls ([Plots](../format.md#plots)): fourteen kinds (`line`, `bar`, `pie`, `candle`, `scatter`, `area`, `stacked`, `step`, `histogram`, `box`, `heatmap`, `waterfall`, `bubble`, `donut`), and `x`, `y`, `title`, `width`, `height`, `bins`, `k`, `labels`, `ticks`, `units`, `origin`, `logx`, `logy`, `fit`, `legend` and `palette` (seven palettes). A version from before plots stops at a `plot` line.
+- **Reports** draw a plot as an SVG where `{{ Name }}` is written, or in place in an `omx` block ([Reports](../reports.md#plots)). `examples/plots.omx` and `examples/plots-report.md` have one of each kind.
+- **Plot pane (F7):** the plots of the sheet on view, one at a time, drawn in the theme's colours. A click on a line, a bar or a heatmap cell lights its row in the sheet. The settings pane has the kind as tiles (a kind the data does not suit is dimmed, with why), the data, the columns as chips, the options and the palette; each change is one step to undo and a change that would make the file wrong is refused. F7 steps round the plots, the settings and neither; `+ Plot` makes one.
+- **Set panels** cascade when several are open, F4 moves between them, Escape closes them one at a time and a click on the sheet closes them all.
+- **Sequences** go on in Unicode order: `'α' ... 'ω'`, `'♈' ... '♓'`.
+
 ## Breaking
 
 - **`Duration` is a kind of `Quantity`, for time.** A bare `Duration` column now shows seconds, `Duration[s]`, in its head with numbers in its cells (`5400`), where it showed `PT1H30M`. Ask for the old look with `Duration[iso]`. `Duration[h; .2f]`, `Duration[min]` and `Duration[%H:%M:%S]` are new.

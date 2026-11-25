@@ -39,7 +39,7 @@ The keys below work on the cell cursor and the selection. Ctrl+/ shows this list
 | F3 | View source |
 | F4 | Column sort, filter & settings |
 | F6 | Style bar |
-| F7 | Plot pane |
+| F7 | Plots, plot settings, away |
 | F11 | Fullscreen |
 <!-- keys:end -->
 

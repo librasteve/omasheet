@@ -113,6 +113,29 @@ pub fn numeric_columns(engine: &Engine, program: &Program, plot: &Plot) -> Vec<S
     }
 }
 
+/// The columns of that sheet that have a unit to show: quantities, money and
+/// durations.
+pub fn unit_columns(engine: &Engine, program: &Program, plot: &Plot) -> Vec<String> {
+    match engine.eval_top(&plot.data) {
+        Some(Value::Sheet(view)) => view
+            .cols
+            .iter()
+            .filter(|&&c| {
+                view.rows.iter().take(2000).any(|&r| match engine.cell_shown(view.sheet, c, r) {
+                    Value::Quantity(q) => !q.unit().to_string().is_empty(),
+                    Value::Duration(_) => true,
+                    _ => false,
+                })
+            })
+            .map(|&c| program.sheets[view.sheet].cols[c].name.clone())
+            .collect(),
+        _ => {
+            engine.take_diags();
+            Vec::new()
+        }
+    }
+}
+
 /// Whether the origin is in view on its own along each axis, `x` then `y`: the
 /// values there go from below zero to above it, or the kind of plot starts
 /// its bars from zero. Then the plot's `origin` has nothing to add.

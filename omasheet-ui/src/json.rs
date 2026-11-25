@@ -27,6 +27,7 @@ pub fn plot_info(
     controls: &[(String, String)],
     columns: &[String],
     numeric: &[String],
+    unit_cols: &[String],
     fit: &[(String, String)],
     origin_in: (bool, bool),
 ) -> String {
@@ -41,6 +42,8 @@ pub fn plot_info(
     out.push_str(&strings(columns));
     out.push_str(",\"numeric\":");
     out.push_str(&strings(numeric));
+    out.push_str(",\"unitCols\":");
+    out.push_str(&strings(unit_cols));
     out.push_str(",\"fit\":{");
     for (i, (kind, why)) in fit.iter().enumerate() {
         if i > 0 {

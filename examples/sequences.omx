@@ -161,3 +161,27 @@ Greek  := 'α' ... 'ω'
 // So do signs: the twelve of the zodiac are side by side. The selector that
 // asks for the coloured emoji stays on each.
 Zodiac := '♈️' ... '♓️'
+
+sheet Units
+
+Step  : Length[m]
+Money : Currency[GBP; $]
+
+| Step | Scale | Money |
+| ---- | ----- | ----- |
+| *    | *     | *     |
+| *    | *     | *     |
+| *    | *     | *     |
+| *    | *     | *     |
+| *    | *     | *     |
+| *    | *     | *     |
+
+// A unit goes with the terms and stays through the sequence: the step is
+// taken between the quantities, so 0m and 250m go on by 250 metres.
+Step  := 0m, 250m ... Inf
+
+// A ratio is taken in the same way, a millimetre ten times larger each row.
+Scale := 1mm, 10mm, 100mm ... Inf
+
+// And so is money, a pound more each row.
+Money := £1, £2 ... Inf

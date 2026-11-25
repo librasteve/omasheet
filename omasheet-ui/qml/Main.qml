@@ -375,9 +375,9 @@ ApplicationWindow {
     // The share of the window the plot pane takes: half until the divider
     // is dragged, and kept as the window is resized.
     property real plotShare: 0.5
-    // The settings pane beside it, of a width of its own, and shown unless
-    // it was put away. It is made of the plots' width, not added to it.
-    property bool showPlotSettings: file.savedPlotSettings()
+    // The settings pane beside it, of a width of its own, and closed on every open, until it is
+    // opened. It is made of the plots' width, not added to it.
+    property bool showPlotSettings: false
     onShowPlotSettingsChanged: {
         file.savePlotSettings(showPlotSettings);
         // Drawn at once at the new width, once the layout has moved, so that
@@ -662,6 +662,206 @@ ApplicationWindow {
         box.x = right + box.width <= win.width - 8 ? item.width - lap
             : Math.max(-item.mapToItem(null, 0, 0).x + 8, lap - box.width);
         box.y = 0;
+        // Another Set panel already open: this one is cascaded below and to
+        // the right of it, so that every title bar stays in view.
+        var others = 0;
+        for (var i = 0; i < metaPanels.length; i++) {
+            var other = metaPanel(metaPanels[i]);
+            if (other !== box && other.visible)
+                others++;
+        }
+        box.x += others * 28;
+        box.y = others * 36;
+        box.z = ++metaZ;
+    }
+    property int metaZ: 1
+    property string chipRefocus: ""
+    // The Set panels are put away by Escape, one at a time, or by a click
+    // on the sheet, all at once: a click elsewhere, or a right click to
+    // open another, leaves them open so that several can be open together.
+    // A Set panel put away leaves the focus with another still open, the next
+    // in order, so that Escape pressed again and again closes them all.
+    function metaClosed() {
+        for (var i = 0; i < metaPanels.length; i++) {
+            var panel = metaPanel(metaPanels[i]);
+            if (panel.visible) {
+                panel.focusField();
+                return;
+            }
+        }
+        grid.forceActiveFocus();
+    }
+    // F7 steps round the plot areas: the plots, with the focus on their tabs;
+    // then the settings of the plot, with the focus in them; then both put
+    // away, and the focus back on the sheet. Esc steps back the same way.
+    function stepPlotAreas() {
+        if (!showPlot) {
+            showPlotSettings = false;
+            showPlot = true;
+            Qt.callLater(function() { plotNav.forceActiveFocus(); });
+        } else if (!showPlotSettings && !plotNav.activeFocus) {
+            // The plots are already open, as they are on opening a file: the
+            // first press takes the focus to their tabs.
+            plotNav.forceActiveFocus();
+        } else if (!showPlotSettings) {
+            showPlotSettings = true;
+            Qt.callLater(focusSettings);
+        } else {
+            showPlotSettings = false;
+            showPlot = false;
+            grid.forceActiveFocus();
+        }
+    }
+    // The keyboard in the settings. The controls that take it carry `navStop`;
+    // the ones that share a parent are a section. Tab goes from section to
+    // section, an arrow from control to control in one, and a text field
+    // never takes a Tab as a character.
+    function settingsGroups() {
+        var groups = [], seen = [];
+        function walk(node) {
+            var kids = [];
+            var a = node.children;
+            for (var i = 0; i < a.length; i++)
+                kids.push(a[i]);
+            if (node.contentItem && node.contentItem !== node && node.contentItem.children) {
+                var b = node.contentItem.children;
+                for (var k = 0; k < b.length; k++)
+                    kids.push(b[k]);
+            }
+            for (var m = 0; m < kids.length; m++) {
+                var kid = kids[m];
+                if (seen.indexOf(kid) >= 0)
+                    continue;
+                seen.push(kid);
+                if (kid.navStop === true) {
+                    if (kid.visible && kid.enabled) {
+                        var last = groups.length > 0 ? groups[groups.length - 1] : null;
+                        if (last && last.key === kid.parent)
+                            last.items.push(kid);
+                        else
+                            groups.push({ key: kid.parent, items: [kid] });
+                    }
+                } else if (kid.visible) {
+                    walk(kid);
+                }
+            }
+        }
+        walk(settingsColumn);
+        return groups;
+    }
+    // The control with the focus, or the one that holds the text field that has it.
+    function settingsFocused(groups) {
+        var item = win.activeFocusItem;
+        while (item && item.navStop !== true)
+            item = item.parent;
+        if (!item)
+            return null;
+        for (var g = 0; g < groups.length; g++) {
+            var at = groups[g].items.indexOf(item);
+            if (at >= 0)
+                return { group: g, index: at, item: item };
+        }
+        return null;
+    }
+    function focusSetting(item) {
+        item.forceActiveFocus();
+        revealTimer.target = item;
+        revealTimer.restart();
+    }
+    // Kept in view once the layout has settled, in any list it is in (the
+    // kind tiles) and then in the settings.
+    function revealSetting(item) {
+        for (var p = item.parent; p && p !== settingsColumn; p = p.parent) {
+            if (p.contentY !== undefined && p.contentItem) {
+                var at = item.mapToItem(p.contentItem, 0, 0).y;
+                if (at < p.contentY)
+                    p.contentY = Math.max(0, at);
+                else if (at + item.height > p.contentY + p.height)
+                    p.contentY = at + item.height - p.height;
+            }
+        }
+        var y = item.mapToItem(settingsColumn, 0, 0).y + settingsColumn.y;
+        if (y < settingsFlick.contentY)
+            settingsFlick.contentY = Math.max(0, y - 8);
+        else if (y + item.height > settingsFlick.contentY + settingsFlick.height)
+            settingsFlick.contentY = y + item.height - settingsFlick.height + 8;
+    }
+    Timer {
+        id: revealTimer
+        interval: 60
+        property var target: null
+        onTriggered: if (target && target.visible) win.revealSetting(target)
+    }
+    function settingsStep(dir) {
+        var groups = settingsGroups();
+        if (groups.length === 0)
+            return;
+        var at = settingsFocused(groups);
+        var g = at ? (at.group + dir + groups.length) % groups.length : 0;
+        var pick = groups[g].items[0];
+        for (var i = 0; i < groups[g].items.length; i++) {
+            if (groups[g].items[i].on === true) {
+                pick = groups[g].items[i];
+                break;
+            }
+        }
+        focusSetting(pick);
+    }
+    function settingsArrow(key) {
+        var groups = settingsGroups();
+        var at = settingsFocused(groups);
+        if (!at)
+            return;
+        var items = groups[at.group].items;
+        var horizontal = key === Qt.Key_Left || key === Qt.Key_Right;
+        if (horizontal) {
+            var to = at.index + (key === Qt.Key_Right ? 1 : -1);
+            if (to >= 0 && to < items.length)
+                focusSetting(items[to]);
+            return;
+        }
+        var up = key === Qt.Key_Up;
+        var here = at.item.mapToItem(settingsColumn, 0, 0);
+        var best = null, bestScore = 0;
+        for (var i = 0; i < items.length; i++) {
+            var there = items[i].mapToItem(settingsColumn, 0, 0);
+            var dy = there.y - here.y;
+            if (up ? dy > -4 : dy < 4)
+                continue;
+            var score = Math.abs(dy) * 1000 + Math.abs(there.x - here.x);
+            if (!best || score < bestScore) {
+                best = items[i];
+                bestScore = score;
+            }
+        }
+        if (best)
+            focusSetting(best);
+    }
+    // The focus to the settings: on the kind the plot is, else the first that suits.
+    function focusSettings() {
+        var first = null;
+        for (var i = 0; i < kindTiles.children.length; i++) {
+            var tile = kindTiles.children[i];
+            if (tile.navStop !== true)
+                continue;
+            if (tile.on) {
+                focusSetting(tile);
+                return;
+            }
+            if (!first)
+                first = tile;
+        }
+        if (first)
+            focusSetting(first);
+        else
+            settingsStep(1);
+    }
+    function closeMeta() {
+        for (var i = 0; i < metaPanels.length; i++) {
+            var panel = metaPanel(metaPanels[i]);
+            if (panel.visible)
+                panel.close();
+        }
     }
 
     // The type as the head shows it: `Mass[kg]` for a column of quantities
@@ -3570,6 +3770,21 @@ ApplicationWindow {
         return allFormattable();
     }
     function cycleMeta(dir) {
+        // With more than one panel open, F4 moves the focus between them
+        // instead, in the same order, and leaves them all open.
+        var open = [], held = -1;
+        for (var q = 0; q < metaPanels.length; q++) {
+            var panel = metaPanel(metaPanels[q]);
+            if (panel.visible) {
+                if (panel.activeFocus)
+                    held = open.length;
+                open.push(panel);
+            }
+        }
+        if (open.length > 1) {
+            open[((held < 0 ? (dir > 0 ? -1 : 0) : held) + dir + open.length) % open.length].focusField();
+            return;
+        }
         var at = -1;
         for (var i = 0; i < metaPanels.length; i++) {
             if (metaPanel(metaPanels[i]).visible)
@@ -4107,6 +4322,15 @@ ApplicationWindow {
         reload();
         if (file.filePath.length > 0)
             file.keepLastFile(file.filePath);
+        // A file whose first sheet has plots opens with them shown, and the
+        // settings away.
+        try {
+            var firsts = snap.sheets.length > 0 ? snap.sheets[0].name : "";
+            if (firsts.length > 0 && JSON.parse(file.plotParentsJson()).indexOf(firsts) >= 0) {
+                showPlotSettings = false;
+                showPlot = true;
+            }
+        } catch (e) {}
         grid.forceActiveFocus();
     }
 
@@ -4205,7 +4429,7 @@ ApplicationWindow {
     Shortcut { sequence: "F1"; onActivated: functionsDialog.open() }
     Shortcut { sequence: "F2"; enabled: !win.showSource; onActivated: win.editInBox() }
     Shortcut { sequence: "F3"; onActivated: win.viewSource(!win.showSource) }
-    Shortcut { sequence: "F7"; onActivated: win.showPlot = !win.showPlot }
+    Shortcut { sequence: "F7"; onActivated: win.stepPlotAreas() }
     // F6 moves the keyboard to the style bar and back: arrows choose, Enter acts, Esc leaves.
     Shortcut {
         sequence: "F6"; enabled: !win.editing && win.canStyle
@@ -5116,6 +5340,8 @@ ApplicationWindow {
                                     function selectHere(mouse) {
                                         // Select the whole column.
                                         win.commitEditing();
+                                        if (mouse.button === Qt.LeftButton)
+                                            win.closeMeta();
                                         win.byRow = false;
                                         win.byCol = true;
                                         // The cursor waits in the first cell.
@@ -5679,6 +5905,8 @@ ApplicationWindow {
                                             }
                                             if (win.editing)
                                                 win.commitEditing();
+                                            if (mouse.button === Qt.LeftButton)
+                                                win.closeMeta();
                                             grid.forceActiveFocus();
                                             win.selectCell(cellItem.row, cellItem.index, mouse.modifiers & Qt.ShiftModifier);
                                         }
@@ -6467,7 +6695,7 @@ ApplicationWindow {
                     : win.cellWarning.length > 0 ? win.cellWarning
                     : win.cellFull.length > 0 ? win.cellFull
                     : moving ? "Select a " + (win.grabbed.rows ? "row" : "column") + " and paste to move here (Esc cancels)"
-                    : win.formulaCell ? "This is a formula column, this change will apply to the entire column"
+                    : win.formulaCell ? "This is a formula column, a change will apply to the entire column"
                     : file.status.length > 0 && (statusShown || win.entryHint.length === 0) ? file.status
                     : win.entryHint.length > 0 ? win.entryHint
                     : plotNoteText.length > 0 ? plotNoteText
@@ -6622,6 +6850,56 @@ ApplicationWindow {
             }
         }
 
+        // The focus of the tabs: Left and Right choose the plot, Enter opens its
+        // settings, N makes a plot, and Esc puts the plots away.
+        Item {
+            id: plotNav
+            width: 1
+            height: 1
+            activeFocusOnTab: plotPane.visible || activeFocus
+            // Past the last plot is `+ Plot`: the arrows go on to it, and Enter makes a plot.
+            property bool onAdd: false
+            Keys.onPressed: function(event) {
+                var n = win.plotNames.length;
+                var back = event.key === Qt.Key_Left || event.key === Qt.Key_Up;
+                var forward = event.key === Qt.Key_Right || event.key === Qt.Key_Down;
+                if (back || forward) {
+                    // The stops are the plots, then `+ Plot` where it is enabled.
+                    var stops = n + (addButton.enabled ? 1 : 0);
+                    if (stops > 0) {
+                        var at = onAdd ? n : win.plotIndex;
+                        at = (at + (forward ? 1 : stops - 1)) % stops;
+                        onAdd = at >= n;
+                        if (!onAdd) win.plotIndex = at;
+                    }
+                } else if (event.key === Qt.Key_Home) {
+                    onAdd = false;
+                    if (n > 0) win.plotIndex = 0;
+                } else if (event.key === Qt.Key_End) {
+                    onAdd = addButton.enabled;
+                    if (!onAdd && n > 0) win.plotIndex = n - 1;
+                } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter || event.key === Qt.Key_Space) {
+                    if (onAdd) {
+                        onAdd = false;
+                        win.newPlot();
+                    } else {
+                        if (!win.showPlotSettings) win.showPlotSettings = true;
+                        Qt.callLater(win.focusSettings);
+                    }
+                } else if (event.key === Qt.Key_N || event.key === Qt.Key_Plus) {
+                    onAdd = false;
+                    win.newPlot();
+                } else if (event.key === Qt.Key_Escape) {
+                    win.showPlot = false;
+                    grid.forceActiveFocus();
+                } else {
+                    return;
+                }
+                win.plotProblem = "";
+                event.accepted = true;
+            }
+        }
+
         Column {
             id: plotHeader
             x: 8
@@ -6643,16 +6921,35 @@ ApplicationWindow {
                         onClicked: {
                             win.plotProblem = "";
                             win.plotIndex = index;
+                            plotNav.forceActiveFocus();
+                        }
+                        // Where the keys are: a frame round the plot chosen.
+                        Rectangle {
+                            anchors.fill: parent
+                            radius: 4
+                            color: "transparent"
+                            border.width: 2
+                            border.color: win.accentColor
+                            visible: plotNav.activeFocus && parent.active && !plotNav.onAdd
                         }
                     }
                 }
                 // A new plot, to the right of the tabs: it is made of the sheet shown, as
                 // a line, and the settings open to say the rest.
                 FooterButton {
+                    id: addButton
                     label: "+ Plot"
                     quiet: true
                     enabled: win.snap.sheets.length > 0 && !win.sheet.isConsts
                     onClicked: win.newPlot()
+                    Rectangle {
+                        anchors.fill: parent
+                        radius: 4
+                        color: "transparent"
+                        border.width: 2
+                        border.color: win.accentColor
+                        visible: plotNav.activeFocus && plotNav.onAdd
+                    }
                 }
             }
         }
@@ -6722,6 +7019,36 @@ ApplicationWindow {
         id: plotSettings
         parent: root
         visible: win.showPlot && win.showPlotSettings && !win.showSource
+        focus: false
+        // Esc puts the settings away and leaves the focus on the plots' tabs;
+        // F2 renames the plot.
+        Keys.onEscapePressed: function(event) {
+            win.showPlotSettings = false;
+            plotNav.forceActiveFocus();
+            event.accepted = true;
+        }
+        Keys.onTabPressed: function(event) {
+            win.settingsStep(1);
+            event.accepted = true;
+        }
+        Keys.onBacktabPressed: function(event) {
+            win.settingsStep(-1);
+            event.accepted = true;
+        }
+        Keys.onPressed: function(event) {
+            if (event.key === Qt.Key_F2 && win.plotNames.length > 0) {
+                promptDialog.ask("renamePlot");
+                event.accepted = true;
+            } else if (event.key === Qt.Key_Left || event.key === Qt.Key_Right
+                    || event.key === Qt.Key_Up || event.key === Qt.Key_Down) {
+                // A text field's arrows are its own.
+                var f = win.activeFocusItem;
+                if (f && f.cursorPosition !== undefined)
+                    return;
+                win.settingsArrow(event.key);
+                event.accepted = true;
+            }
+        }
         x: root.width - width
         y: grid.y
         width: win.plotSettingsWidth
@@ -6796,6 +7123,11 @@ ApplicationWindow {
                             font.pixelSize: win.fontSize + 3
                             font.weight: Font.DemiBold
                             text: win.plotNames[win.plotIndex] || ""
+                            MouseArea {
+                                anchors.fill: parent
+                                onDoubleClicked: promptDialog.ask("renamePlot")
+                                onContainsMouseChanged: win.hover(this, containsMouse ? "Double-click to rename the plot" : "", false)
+                            }
                         }
                         Text {
                             width: parent.width
@@ -6814,6 +7146,7 @@ ApplicationWindow {
                         anchors.right: parent.right
                         label: "⋯"
                         quiet: true
+                        property bool navStop: true
                         tip: "Rename or delete the plot"
                         onClicked: plotMenu.popup(moreButton, 0, moreButton.height)
                     }
@@ -6885,8 +7218,20 @@ ApplicationWindow {
                                     opacity: why.length > 0 ? 0.35 : 1
                                     color: on ? Qt.rgba(win.accentColor.r, win.accentColor.g, win.accentColor.b, 0.2)
                                         : tileArea.containsMouse && why.length === 0 ? Qt.rgba(win.textColor.r, win.textColor.g, win.textColor.b, 0.09) : win.panelColor
-                                    border.width: on ? 2 : 1
-                                    border.color: on ? win.accentColor : win.lineColor
+                                    border.width: on || activeFocus ? 2 : 1
+                                    border.color: on || activeFocus ? win.accentColor : win.lineColor
+                                    property bool navStop: why.length === 0
+                                    Keys.onPressed: function(event) {
+                                        if (why.length === 0 && (event.key === Qt.Key_Space || event.key === Qt.Key_Return || event.key === Qt.Key_Enter)) {
+                                            win.setPlot("type", modelData);
+                                            event.accepted = true;
+                                        }
+                                    }
+                                    // Kept in view as the tab key goes down the tiles.
+                                    onActiveFocusChanged: if (activeFocus) {
+                                        if (y < tilesFlick.contentY) tilesFlick.contentY = y;
+                                        else if (y + height > tilesFlick.contentY + tilesFlick.height) tilesFlick.contentY = y + height - tilesFlick.height;
+                                    }
                                     Behavior on color { ColorAnimation { duration: 120 } }
                                     KindIcon {
                                         anchors.horizontalCenter: parent.horizontalCenter
@@ -7015,6 +7360,10 @@ ApplicationWindow {
                     readonly property bool fitOk: ["line", "step", "area", "scatter", "bubble"].indexOf(kind) >= 0
                     readonly property bool originInX: !!(win.plotInfo.originIn && win.plotInfo.originIn.x)
                     readonly property bool originInY: !!(win.plotInfo.originIn && win.plotInfo.originIn.y)
+                    // Where there is a unit to show: in the column of x, or in a column of y.
+                    readonly property var unitCols: win.plotInfo.unitCols || []
+                    readonly property bool xHasUnit: unitCols.indexOf(xName) >= 0
+                    readonly property bool yHasUnit: current.some(function(c) { return unitCols.indexOf(c) >= 0; })
                     readonly property bool cartesian: onAxes || kind === "histogram" || kind === "box"
                     readonly property bool labelsOk: onAxes || kind === "histogram"
                     SettingsLabel {
@@ -7039,7 +7388,7 @@ ApplicationWindow {
                         width: parent.width
                         spacing: 6
                         SettingsCheck {
-                            visible: axes.showX && axes.onAxes && axes.numeric.indexOf(axes.xName) >= 0
+                            visible: axes.showX && axes.onAxes && axes.numeric.indexOf(axes.xName) >= 0 && (axes.xHasUnit || on)
                             flag: "units"
                             axis: "x"
                             text: "Units"
@@ -7092,7 +7441,7 @@ ApplicationWindow {
                         width: parent.width
                         spacing: 6
                         SettingsCheck {
-                            visible: axes.cartesian
+                            visible: axes.cartesian && (axes.yHasUnit || on)
                             flag: "units"
                             axis: "y"
                             text: "Units"
@@ -7238,8 +7587,19 @@ ApplicationWindow {
                                 radius: 8
                                 color: on ? Qt.rgba(win.accentColor.r, win.accentColor.g, win.accentColor.b, 0.2)
                                     : palArea.containsMouse ? Qt.rgba(win.textColor.r, win.textColor.g, win.textColor.b, 0.09) : win.panelColor
-                                border.width: on ? 2 : 1
-                                border.color: on ? win.accentColor : win.lineColor
+                                border.width: on || activeFocus ? 2 : 1
+                                border.color: on || activeFocus ? win.accentColor : win.lineColor
+                                property bool navStop: true
+                                Keys.onPressed: function(event) {
+                                    if (event.key === Qt.Key_Space || event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+                                        win.setPlot("palette", modelData.name === "classic" ? "" : modelData.name);
+                                        event.accepted = true;
+                                    }
+                                }
+                                onActiveFocusChanged: if (activeFocus) {
+                                    if (y < palFlick.contentY) palFlick.contentY = y;
+                                    else if (y + height > palFlick.contentY + palFlick.height) palFlick.contentY = y + height - palFlick.height;
+                                }
                                 Behavior on color { ColorAnimation { duration: 120 } }
                                 Row {
                                     anchors.horizontalCenter: parent.horizontalCenter
@@ -7308,6 +7668,49 @@ ApplicationWindow {
                         }
                     }
                 }
+
+                // The size of the picture in a report or an export, in pixels; the pane
+                // here is drawn to fill the space it has.
+                Column {
+                    width: parent.width
+                    spacing: 6
+                    SettingsLabel { text: "Size in reports" }
+                    Row {
+                        spacing: 8
+                        Text {
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: "Width"
+                            color: win.mutedColor
+                            font.family: win.font.family
+                            font.pixelSize: win.smallSize
+                        }
+                        SettingsField {
+                            width: Math.round(win.smallSize * 4.6) + 20
+                            maximumLength: 4
+                            inputMethodHints: Qt.ImhDigitsOnly
+                            validator: IntValidator { bottom: 100; top: 4000 }
+                            text: win.plotInfo.controls.width || ""
+                            placeholderText: "640"
+                            onCommitted: function(value) { win.setPlot("width", value) }
+                        }
+                        Text {
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: "Height"
+                            color: win.mutedColor
+                            font.family: win.font.family
+                            font.pixelSize: win.smallSize
+                        }
+                        SettingsField {
+                            width: Math.round(win.smallSize * 4.6) + 20
+                            maximumLength: 4
+                            inputMethodHints: Qt.ImhDigitsOnly
+                            validator: IntValidator { bottom: 100; top: 4000 }
+                            text: win.plotInfo.controls.height || ""
+                            placeholderText: "360"
+                            onCommitted: function(value) { win.setPlot("height", value) }
+                        }
+                    }
+                }
             }
         }
     }
@@ -7349,6 +7752,9 @@ ApplicationWindow {
         }
         TextArea {
             id: edit
+            property bool navStop: true
+            Keys.onTabPressed: function(event) { win.settingsStep(1); event.accepted = true; }
+            Keys.onBacktabPressed: function(event) { win.settingsStep(-1); event.accepted = true; }
             anchors.fill: parent
             anchors.rightMargin: 24
             background: null
@@ -7421,10 +7827,28 @@ ApplicationWindow {
         radius: 6
         color: on ? Qt.rgba(win.accentColor.r, win.accentColor.g, win.accentColor.b, 0.22)
             : toggleArea.containsMouse ? Qt.rgba(win.textColor.r, win.textColor.g, win.textColor.b, 0.09) : win.panelColor
-        border.width: 1
-        border.color: on ? win.accentColor : win.lineColor
+        border.width: activeFocus ? 2 : 1
+        border.color: on || activeFocus ? win.accentColor : win.lineColor
+        property bool navStop: true
+        Keys.onPressed: function(event) {
+            if (event.key === Qt.Key_Space || event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+                check.toggle();
+                event.accepted = true;
+            }
+        }
+        function toggle() {
+            if (check.axis !== "") {
+                var x = check.axis === "x" ? !check.hasX : check.hasX;
+                var y = check.axis === "y" ? !check.hasY : check.hasY;
+                win.setPlot(check.flag, x && y ? "both" : x ? "x" : y ? "y" : "");
+            } else if (check.automatic >= 0) {
+                win.setPlot(check.flag, check.on ? "false" : "true");
+            } else {
+                win.setPlot(check.flag, check.on ? "" : check.onValue);
+            }
+        }
         Behavior on color { ColorAnimation { duration: 120 } }
-                Text {
+        Text {
             anchors.centerIn: parent
             color: check.on ? win.accentColor : win.textColor
             font.family: win.font.family
@@ -7436,17 +7860,7 @@ ApplicationWindow {
             anchors.fill: parent
             hoverEnabled: true
             cursorShape: Qt.PointingHandCursor
-            onClicked: {
-                if (check.axis !== "") {
-                    var x = check.axis === "x" ? !check.hasX : check.hasX;
-                    var y = check.axis === "y" ? !check.hasY : check.hasY;
-                    win.setPlot(check.flag, x && y ? "both" : x ? "x" : y ? "y" : "");
-                } else if (check.automatic >= 0) {
-                    win.setPlot(check.flag, check.on ? "false" : "true");
-                } else {
-                    win.setPlot(check.flag, check.on ? "" : check.onValue);
-                }
-            }
+            onClicked: check.toggle()
         }
     }
 
@@ -7464,6 +7878,10 @@ ApplicationWindow {
     // pressed, and only then.
     component SettingsField: TextField {
         id: field
+        property bool navStop: true
+        // A Tab moves to the next section of the settings, never into the text.
+        Keys.onTabPressed: function(event) { win.settingsStep(1); event.accepted = true; }
+        Keys.onBacktabPressed: function(event) { win.settingsStep(-1); event.accepted = true; }
         signal committed(string value)
         selectByMouse: true
         color: win.textColor
@@ -7511,8 +7929,22 @@ ApplicationWindow {
         radius: height / 2
         color: on ? Qt.rgba(win.accentColor.r, win.accentColor.g, win.accentColor.b, 0.22)
             : chipArea.containsMouse ? Qt.rgba(win.textColor.r, win.textColor.g, win.textColor.b, 0.09) : win.panelColor
-        border.width: 1
-        border.color: on ? win.accentColor : win.lineColor
+        border.width: activeFocus ? 2 : 1
+        border.color: on || activeFocus ? win.accentColor : win.lineColor
+        property bool navStop: true
+        Keys.onPressed: function(event) {
+            if (event.key === Qt.Key_Space || event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+                // The chips are made afresh when the plot changes: the one
+                // pressed takes the focus back as it is made.
+                win.chipRefocus = chip.text + "|" + chip.parent;
+                chip.clicked();
+                event.accepted = true;
+            }
+        }
+        Component.onCompleted: if (win.chipRefocus === chip.text + "|" + chip.parent) {
+            win.chipRefocus = "";
+            Qt.callLater(function() { chip.forceActiveFocus(); });
+        }
         Behavior on color { ColorAnimation { duration: 120 } }
         Text {
             id: chipText
@@ -7941,6 +8373,20 @@ ApplicationWindow {
         signal clicked()
         signal rightClicked()
         signal doubleClicked()
+        Keys.onPressed: function(event) {
+            if (event.key === Qt.Key_Space || event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+                button.clicked();
+                event.accepted = true;
+            }
+        }
+        Rectangle {
+            anchors.fill: parent
+            radius: 4
+            color: "transparent"
+            border.width: 2
+            border.color: win.accentColor
+            visible: button.activeFocus
+        }
         implicitWidth: bars ? win.fontSize * 2 + 8 : buttonText.implicitWidth + 22
         implicitHeight: win.fontSize * 2
         // In the footer's row these keep their width: the tabs, which can
@@ -8029,10 +8475,10 @@ ApplicationWindow {
         readonly property int textSize: win.fontSize
         readonly property int lineHeight: Math.round(textSize * 1.9)
         // The operators beside it, open, take Escape, Enter and clicks themselves.
-        closePolicy: filterHelp.visible ? Popup.NoAutoClose
-            : (Popup.CloseOnEscape | Popup.CloseOnPressOutside)
-        onClosed: grid.forceActiveFocus()
-        onOpened: Qt.callLater(function() { filterField.forceActiveFocus(); filterField.selectAll(); })
+        closePolicy: filterHelp.visible ? Popup.NoAutoClose : Popup.CloseOnEscape
+        onClosed: win.metaClosed()
+        onOpened: Qt.callLater(focusField)
+        function focusField() { filterField.forceActiveFocus(); filterField.selectAll(); }
 
         function openFor(c, item) {
             // Sorting and filtering are off while the sheet has blocks.
@@ -8695,10 +9141,11 @@ ApplicationWindow {
         property int minRows: 0
         padding: 6
         width: win.setPopupWidth
-        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
-        onClosed: grid.forceActiveFocus()
+        closePolicy: Popup.CloseOnEscape
+        onClosed: win.metaClosed()
         // The cursor is in the text box once the box is up.
-        onOpened: Qt.callLater(function() { search.forceActiveFocus(); })
+        onOpened: Qt.callLater(focusField)
+        function focusField() { search.forceActiveFocus(); }
 
         Connections {
             target: win
@@ -9496,8 +9943,7 @@ ApplicationWindow {
         // close it.
         // Escape and Enter, with the prefixes open, are theirs: they close it,
         // and this one stays.
-        closePolicy: prefixHelp.visible ? Popup.NoAutoClose
-            : (Popup.CloseOnEscape | Popup.CloseOnPressOutside)
+        closePolicy: prefixHelp.visible ? Popup.NoAutoClose : Popup.CloseOnEscape
         placeholder: "e.g. Data[MiB]"
         provider: function(text) {
             var out = [];
@@ -10037,10 +10483,10 @@ ApplicationWindow {
         width: win.setPopupWidth
         // Escape and Enter, and a click in the legend beside it, are the
         // legend's, with it open.
-        closePolicy: formatHelp.visible ? Popup.NoAutoClose
-            : (Popup.CloseOnEscape | Popup.CloseOnPressOutside)
-        onClosed: grid.forceActiveFocus()
-        onOpened: Qt.callLater(function() { field.forceActiveFocus(); field.selectAll(); })
+        closePolicy: formatHelp.visible ? Popup.NoAutoClose : Popup.CloseOnEscape
+        onClosed: win.metaClosed()
+        onOpened: Qt.callLater(focusField)
+        function focusField() { field.forceActiveFocus(); field.selectAll(); }
 
         // The width of the widest format listed, for the column they stand in.
         FontMetrics {

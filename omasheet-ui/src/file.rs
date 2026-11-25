@@ -862,6 +862,7 @@ impl qobject::File {
             &controls,
             &doc.plot_columns(&name),
             &doc.plot_numeric_columns(&name),
+            &doc.plot_unit_columns(&name),
             &doc.plot_fit(&name),
             doc.plot_origin_in(&name),
         ))
@@ -1995,7 +1996,7 @@ impl qobject::File {
     }
 
     fn saved_plot_settings(&self) -> bool {
-        crate::theme::read_config("plot-settings").trim() != "0"
+        crate::theme::read_config("plot-settings").trim() == "1"
     }
 
     fn save_plot_settings(&self, shown: bool) {

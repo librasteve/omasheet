@@ -41,51 +41,6 @@ Amplitude : Length[mm]
 Time := 0.0s, 0.5s ... 12.0s
 Amplitude := Length(exp(-Time / 4s) * cos(Time * 2Hz), 'mm')
 
-// A line at numbers along x, not at equal steps.
-plot Damped
-type: line
-data: Oscillator
-title: Damped oscillation, amplitude (mm) over time (s)
-
-sheet Spiral
-
-| N  | Z   | Re | Im |
-| -- | --- | -- | -- |
-| *  | *   | *  | *  |
-| *  | *   | *  | *  |
-| *  | *   | *  | *  |
-| *  | *   | *  | *  |
-| *  | *   | *  | *  |
-| *  | *   | *  | *  |
-| *  | *   | *  | *  |
-| *  | *   | *  | *  |
-| *  | *   | *  | *  |
-| *  | *   | *  | *  |
-| *  | *   | *  | *  |
-| *  | *   | *  | *  |
-| *  | *   | *  | *  |
-| *  | *   | *  | *  |
-| *  | *   | *  | *  |
-| *  | *   | *  | *  |
-| *  | *   | *  | *  |
-| *  | *   | *  | *  |
-| *  | *   | *  | *  |
-| *  | *   | *  | *  |
-| *  | *   | *  | *  |
-| *  | *   | *  | *  |
-| *  | *   | *  | *  |
-| *  | *   | *  | *  |
-| *  | *   | *  | *  |
-
-N := 0 ... 24
-
-// A complex number is plotted by its parts, on the plane: the real part
-// along and the imaginary part up. Each step turns the point by 0.3
-// radian and shrinks its distance from the origin by about a tenth.
-Z  := exp((-0.1 + 0.3i) * N)
-Re := re(Z)
-Im := im(Z)
-
 plot Argand
 type: line
 data: Spiral
@@ -531,3 +486,46 @@ plot Atmosphere
 type: donut
 data: Air
 title: Dry air by volume (%)
+
+plot Damped
+type: line
+data: Oscillator
+
+sheet Spiral
+
+| N  | Z   | Re | Im |
+| -- | --- | -- | -- |
+| *  | *   | *  | *  |
+| *  | *   | *  | *  |
+| *  | *   | *  | *  |
+| *  | *   | *  | *  |
+| *  | *   | *  | *  |
+| *  | *   | *  | *  |
+| *  | *   | *  | *  |
+| *  | *   | *  | *  |
+| *  | *   | *  | *  |
+| *  | *   | *  | *  |
+| *  | *   | *  | *  |
+| *  | *   | *  | *  |
+| *  | *   | *  | *  |
+| *  | *   | *  | *  |
+| *  | *   | *  | *  |
+| *  | *   | *  | *  |
+| *  | *   | *  | *  |
+| *  | *   | *  | *  |
+| *  | *   | *  | *  |
+| *  | *   | *  | *  |
+| *  | *   | *  | *  |
+| *  | *   | *  | *  |
+| *  | *   | *  | *  |
+| *  | *   | *  | *  |
+| *  | *   | *  | *  |
+
+N := 0 ... 24
+
+// A complex number is plotted by its parts, on the plane: the real part
+// along and the imaginary part up. Each step turns the point by 0.3
+// radian and shrinks its distance from the origin by about a tenth.
+Z  := exp((-0.1 + 0.3i) * N)
+Re := re(Z)
+Im := im(Z)

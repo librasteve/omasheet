@@ -5628,6 +5628,17 @@ impl Document {
             .unwrap_or_default()
     }
 
+    /// Which of those columns have a unit to show.
+    pub fn plot_unit_columns(&self, name: &str) -> Vec<String> {
+        let Some(engine) = self.engine.as_ref() else {
+            return Vec::new();
+        };
+        let program = engine.program();
+        crate::plot::find(program, name)
+            .map(|p| crate::plot::unit_columns(engine, program, p))
+            .unwrap_or_default()
+    }
+
     /// Whether the origin is in view of itself along `x` and `y` for plot `name`.
     pub fn plot_origin_in(&self, name: &str) -> (bool, bool) {
         let Some(engine) = self.engine.as_ref() else {

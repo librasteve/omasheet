@@ -638,6 +638,7 @@ title: Value and limit
 | `origin` | `x`, `y` or `both` makes that axis reach zero, whatever the values are. Not on a log axis |
 | `logx`, `logy` | `true` makes the axis logarithmic: `x` for a line, step, area, scatter or bubble plot with numbers in `x`, `y` for a line, step, scatter or bubble. A value not above zero is left out, and error bars are not drawn |
 | `fit` | `basic`, `straight`, `quadratic` or `bezier` (`true` is `straight`): `basic` joins the points by straight segments, and is what any plot but a line has when `fit` is left out, while a line is `bezier`. The others draw a dashed curve through each series of a line, step, area, scatter or bubble plot: the least-squares line or parabola, with its equation, or a smooth curve through the points. On log axes a line is a power law or an exponential |
+| `palette` | The colours: `classic` (the default), `vivid`, `pastel`, `earth`, `cool`, `warm` or `mono`, eight each, the first the major one |
 | `legend` | `true` or `false` shows or hides the legend. Left out, there is one where there are several columns of values |
 
 - A plot has a name of its own: not that of a sheet, a constant or another plot. It may come before or after the sheet it reads.
