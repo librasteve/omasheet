@@ -28,7 +28,7 @@ pub fn type_of(dtype: &DataType) -> Option<S> {
         | DataType::UInt64 => S::Int,
         DataType::Float32 | DataType::Float64 => S::Float,
         // The scale of the dtype is the places the column keeps.
-        DataType::Decimal(_, scale) => S::Decimal(scale.unwrap_or(0).min(38) as u8),
+        DataType::Decimal(_, scale) => S::Decimal((*scale).min(38) as u8),
         DataType::String => S::String,
         DataType::Date => S::Date,
         DataType::Time => S::Time,
@@ -83,7 +83,7 @@ pub fn cell_of(value: AnyValue<'_>, ty: S) -> Cell {
         },
         AnyValue::Float32(f) => Cell::Lit(Lit::Float(f as f64)),
         AnyValue::Float64(f) => Cell::Lit(Lit::Float(f)),
-        AnyValue::Decimal(unscaled, scale) => {
+        AnyValue::Decimal(unscaled, _, scale) => {
             Dec::new(unscaled, scale as i32).map_or(Cell::Invalid, exact)
         }
         AnyValue::Date(days) => Cell::Lit(Lit::Date(days)),
@@ -331,7 +331,7 @@ pub fn is_complex(dtype: &DataType) -> bool {
 /// one. The precision is always the full 38, which is what a Parquet write
 /// and the schema in the text agree on (D72a).
 pub fn decimal(scale: u32) -> DataType {
-    DataType::Decimal(Some(MAX_PRECISION as usize), Some(scale as usize))
+    DataType::Decimal(MAX_PRECISION as usize, scale as usize)
 }
 
 /// A column's calculated values as the Polars column its type names, or
@@ -396,7 +396,7 @@ pub fn column_of(name: &str, ty: S, values: &[Value]) -> Option<PlColumn> {
             // decimal scales it, which is not what these are.
             let ca: Int128Chunked = digits.into_iter().collect_ca(name);
             Some(
-                ca.into_decimal_unchecked(Some(MAX_PRECISION as usize), scale as usize)
+                ca.into_decimal_unchecked(MAX_PRECISION as usize, scale as usize)
                     .into_series(),
             )
         };

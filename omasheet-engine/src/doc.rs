@@ -7746,7 +7746,7 @@ mod tests {
                 )
             })
             .collect();
-        let mut frame = DataFrame::new(columns).unwrap();
+        let mut frame = DataFrame::new_infer_height(columns).unwrap();
         let mut file = std::fs::File::create(dir.join("six.parquet")).unwrap();
         ParquetWriter::new(&mut file)
             .with_row_group_size(Some(1_000))
@@ -7835,7 +7835,7 @@ mod tests {
                 .lazy()
                 .with_columns([
                     col("D").cast(DataType::Date),
-                    col("M").cast(DataType::Decimal(Some(18), Some(2))),
+                    col("M").cast(DataType::Decimal(18, 2)),
                 ])
                 .collect()
                 .unwrap();
@@ -8084,7 +8084,7 @@ mod tests {
             .map(|i| (i % 13 != 6).then_some(((i * 53) % 40) as i64 * 3_600_000_000))
             .collect();
         let yes: Vec<Option<bool>> = (0..n).map(|i| (i % 7 != 2).then_some(i % 3 == 0)).collect();
-        let mut frame = DataFrame::new(vec![
+        let mut frame = DataFrame::new_infer_height(vec![
             Column::new("F".into(), f),
             Column::new("I".into(), int),
             Column::new("S".into(), text),
@@ -8097,7 +8097,7 @@ mod tests {
                 "M".into(),
                 (0..n).map(|i| (i % 17) as f64 / 4.0).collect::<Vec<_>>(),
             )
-            .cast(&DataType::Decimal(Some(10), Some(2)))
+            .cast(&DataType::Decimal(10, 2))
             .unwrap(),
         ])
         .unwrap();
@@ -8236,7 +8236,7 @@ mod tests {
         // truncated; then a day in March 2019, and an empty cell.
         let ns = [Some(-1i64), Some(1_552_608_000_000_000_123), None];
         let ms = [Some(-1i64), Some(1_552_608_000_000), None];
-        let mut frame = DataFrame::new(vec![
+        let mut frame = DataFrame::new_infer_height(vec![
             Column::new("N".into(), ns)
                 .cast(&DataType::Datetime(TimeUnit::Nanoseconds, None))
                 .unwrap(),

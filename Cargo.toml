@@ -19,7 +19,7 @@ repository = "https://github.com/librasteve/omasheet"
 [workspace.dependencies]
 clap = { version = "4", features = ["derive"] }
 libc = "0.2"
-jiff = "0.2"
+jiff = "1"
 omasheet-omx = { path = "omasheet-omx" }
 omasheet-engine = { path = "omasheet-engine" }
 omasheet-interop = { path = "omasheet-interop" }
@@ -30,21 +30,23 @@ omasheet-cli = { path = "omasheet-cli" }
 # non-SI units added (litre, tonne, hectare, bar, eV, cal, Wh, Da) and `u` as
 # a spelling of the micro prefix.
 siquant = { path = "vendor/siquant" }
-calamine = "0.36"
-rust_xlsxwriter = "0.99"
+calamine = "0.38"
+rust_xlsxwriter = "0.104"
 csv = "1"
 # Polars, for Parquet, for the dataframe-backed tables of
 # `add-dataframe-interop`, and for the evaluation of `add-columnar-core`.
 # Unconditional, per D26. `lazy` is what `Expr`, `col()` and the aggregates
 # live behind; `propagate_nans` is a passthrough to it, and is what would
 # make `max` over a NaN agree with the engine (D71a).
-polars = { version = "0.51", default-features = false, features = [
+polars = { version = "0.55", default-features = false, features = [
     "lazy",
     "propagate_nans",
     "parquet",
     # A big CSV is read through a Parquet copy (open-a-big-csv D153).
     "csv",
     "dtype-decimal",
+    # Hashing a Decimal key, in a join or a group, goes through its 128 bits.
+    "dtype-u128",
     "dtype-date",
     "dtype-datetime",
     "dtype-time",

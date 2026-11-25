@@ -362,7 +362,7 @@ fn agree(computed: &Column_, held: &Column_) -> bool {
         let (Ok(a), Ok(b)) = (a.f64(), b.f64()) else {
             return false;
         };
-        return a.into_iter().zip(b).all(|pair| match pair {
+        return a.iter().zip(b.iter()).all(|pair| match pair {
             (Some(x), Some(y)) => (x - y).abs() <= 1e-9 * x.abs().max(y.abs()).max(1e-300),
             (None, None) => true,
             _ => false,
@@ -377,7 +377,7 @@ fn agree(computed: &Column_, held: &Column_) -> bool {
     let (Ok(a), Ok(b)) = (a.str(), b.str()) else {
         return false;
     };
-    a.into_iter().zip(b).all(|pair| match pair {
+    a.iter().zip(b.iter()).all(|pair| match pair {
         (Some(x), Some(y)) => x.trim() == y.trim(),
         (None, None) => true,
         (None, Some(y)) | (Some(y), None) => y.trim().is_empty(),

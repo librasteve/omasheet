@@ -192,7 +192,7 @@ fn frame(
                 // integer to a decimal scales it, which is not what these
                 // are.
                 let ca: Int128Chunked = v.into_iter().collect_ca(name);
-                ca.into_decimal_unchecked(Some(MAX_PRECISION as usize), scale as usize)
+                ca.into_decimal_unchecked(MAX_PRECISION as usize, scale as usize)
                     .into_series()
             }
             S::Float => {
@@ -409,7 +409,7 @@ fn frame(
         columns.push(series.into_column());
     }
 
-    let df = DataFrame::new(columns).map_err(|e| e.to_string())?;
+    let df = DataFrame::new_infer_height(columns).map_err(|e| e.to_string())?;
     Ok((df, kinds))
 }
 
@@ -678,7 +678,7 @@ fn cell(value: AnyValue<'_>, ty: S) -> Datum {
         ),
         AnyValue::Float32(f) => Datum::Lit(float_text(f as f64), S::Float),
         AnyValue::Float64(f) => Datum::Lit(float_text(f), S::Float),
-        AnyValue::Decimal(unscaled, scale) => match Dec::new(unscaled, scale as i32) {
+        AnyValue::Decimal(unscaled, _, scale) => match Dec::new(unscaled, scale as i32) {
             // The places the column keeps ride on the type, so that one with
             // many is declared and not read back as a fraction.
             Some(d) => Datum::Lit(d.to_plain_string(), S::Decimal(scale.min(38) as u8)),
@@ -887,7 +887,7 @@ pub fn import(name: &str, bytes: &[u8]) -> Result<Imported, String> {
     // The schema says what each column is; the values are never consulted.
     let mut kept: Vec<(String, S)> = Vec::new();
     let mut nested = Vec::new();
-    for column in df.get_columns() {
+    for column in df.columns() {
         match type_of(column.dtype()) {
             Some(ty) => kept.push((column.name().to_string(), ty)),
             None if is_fraction(column.dtype()) => {

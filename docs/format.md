@@ -513,7 +513,7 @@ Id    : Integer[#x]
 
 A column with a format shows each number by it rather than by the usual
 rules: `'.2f` shows `12345.678` as `12,345.68`, with as many digits as it
-takes and none cut. The value is unchanged, and the file and the cell
+takes and none cut. A tie is shown to the even digit, as `printf` does: `0.125` under `.2f` is `0.12` and `0.375` is `0.38`, where `round` goes away from zero (see Rounding in `docs/expressions.md`). The value is unchanged, and the file and the cell
 editor still hold it in full. The point is your locale's, and `'` groups
 the whole part by your locale's separator. The app, `omasheet print` and a
 rendered document all show it so (a scale word after a `;`, as `Decimal[.1f; ppm]`, shows 0.000005 as `5.0ppm`; see `docs/expressions.md`): in a document, `{{ Sales.Price[0] }}`

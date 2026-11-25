@@ -1267,10 +1267,10 @@ fn decimal_table(dir: &std::path::Path, rows: usize) {
     let rate: Int128Chunked = (0..rows)
         .map(|r| Some((r % 97) as i128 * one / 100 + one / 100))
         .collect_ca("Rate".into());
-    let amount = amount.into_decimal_unchecked(Some(38), scale).into_series();
-    let rate = rate.into_decimal_unchecked(Some(38), scale).into_series();
+    let amount = amount.into_decimal_unchecked(38, scale).into_series();
+    let rate = rate.into_decimal_unchecked(38, scale).into_series();
     let mut frame =
-        DataFrame::new(vec![amount.into_column(), rate.into_column()]).expect("a frame");
+        DataFrame::new_infer_height(vec![amount.into_column(), rate.into_column()]).expect("a frame");
     let mut file = std::fs::File::create(dir.join("decimals.parquet")).expect("a writable file");
     ParquetWriter::new(&mut file)
         .finish(&mut frame)

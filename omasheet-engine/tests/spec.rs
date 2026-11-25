@@ -2448,11 +2448,10 @@ fn a_row_recursive_column_stays_on_the_engine() {
 }
 
 #[test]
-fn a_quotient_is_lowered_and_rounded_to_its_scale() {
-    // Polars divides truncated at the larger scale and four more places;
-    // the plan rounds it to the ten places the type gives the quotient, as
-    // the engine does, so the two agree to the digit.
-    assert_eq!(attempt(GATES, "Share"), Some(Attempt::Lowered));
+fn a_quotient_stays_on_the_engine_and_is_rounded_to_its_scale() {
+    // Polars 0.55 rounds a decimal quotient at the larger scale of its sides,
+    // so the engine gives it, to the ten places the type gives the quotient.
+    assert_eq!(attempt(GATES, "Share"), Some(Attempt::Refused));
     assert_eq!(
         ask(GATES, "Sales.Share"),
         "[14.2857142857, 17.1428571429, 21.4285714286]"
@@ -4097,8 +4096,9 @@ fn a_column_walked_at_once_holds_what_its_cells_hold() {
     // for the filled price of `windows.omx`, and one more for the column of
     // `blocks.omx` that reads a whole column, and one more for the net of
     // `styles.omx`, a whole number times a decimal, and one more for the
-    // running total of `plots.omx`.
-    assert_eq!(taken, 88, "the columns taken at once");
+    // running total of `plots.omx`, and one fewer for the quotient of the gates,
+    // which is the engine's now that Polars rounds a quotient.
+    assert_eq!(taken, 87, "the columns taken at once");
 }
 
 /// The other order: the cells first, then the column. A value already read

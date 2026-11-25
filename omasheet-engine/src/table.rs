@@ -116,7 +116,7 @@ impl Held {
                 .with_slice(slice)
                 .finish()
                 .ok()?
-                .get_columns()
+                .columns()
                 .first()
                 .cloned(),
             Held::Absent => None,
@@ -252,7 +252,7 @@ fn scan(path: &Path) -> Result<LazyFrame, String> {
     // in the words `open` gives it, rather than in Polars'.
     open(path)?;
     LazyFrame::scan_parquet(
-        PlPath::from_str(&path.to_string_lossy()),
+        PlRefPath::new(path.to_string_lossy()),
         Default::default(),
     )
     .map_err(|e| e.to_string())
@@ -1059,7 +1059,7 @@ fn csv_schema(head: &[u8]) -> Result<CsvTypes, String> {
     let duration = regex::Regex::new(DURATION).unwrap();
     let underscored = regex::Regex::new(UNDERSCORED).unwrap();
     let percent = regex::Regex::new(r"^-?\d+(\.(\d+))?%$").unwrap();
-    for column in frame.get_columns() {
+    for column in frame.columns() {
         if matches!(column.dtype(), DataType::Float64)
             && let Ok(words) = texts
                 .column(column.name().as_str())
@@ -1069,7 +1069,7 @@ fn csv_schema(head: &[u8]) -> Result<CsvTypes, String> {
             // point is the scale. Anything else (an exponent, `NaN`) is a
             // float, as it is to Polars.
             let (mut scale, mut all) = (0usize, true);
-            for word in words.into_iter().flatten() {
+            for word in words.iter().flatten() {
                 match plain.captures(word) {
                     Some(c) => scale = scale.max(c.get(2).map_or(0, |m| m.len())),
                     None => {
@@ -1091,7 +1091,7 @@ fn csv_schema(head: &[u8]) -> Result<CsvTypes, String> {
                 .column(column.name().as_str())
                 .and_then(|c| c.str().cloned())
             && !words
-                .into_iter()
+                .iter()
                 .flatten()
                 .all(|w| w == "true" || w == "false")
         {
@@ -1105,7 +1105,7 @@ fn csv_schema(head: &[u8]) -> Result<CsvTypes, String> {
         // are (`0.075`), marked in the file so that it is shown as they are.
         if texts.null_count() < texts.len() {
             let mut places = Some(0usize);
-            for word in texts.into_iter().flatten() {
+            for word in texts.iter().flatten() {
                 match percent.captures(word) {
                     Some(c) => {
                         places = places.map(|p| p.max(c.get(2).map_or(0, |m| m.len())));
@@ -1125,12 +1125,12 @@ fn csv_schema(head: &[u8]) -> Result<CsvTypes, String> {
         }
         // A column of nothing but hexadecimal numbers is shown in lower
         // case, as an import shows them.
-        if texts.null_count() < texts.len() && texts.into_iter().flatten().all(is_hex) {
+        if texts.null_count() < texts.len() && texts.iter().flatten().all(is_hex) {
             hex.push(column.name().clone());
             continue;
         }
         let every = |re: &regex::Regex| {
-            texts.null_count() < texts.len() && texts.into_iter().flatten().all(|t| re.is_match(t))
+            texts.null_count() < texts.len() && texts.iter().flatten().all(|t| re.is_match(t))
         };
         for (re, literal) in [
             (&time, Literal::Time),
@@ -1140,7 +1140,7 @@ fn csv_schema(head: &[u8]) -> Result<CsvTypes, String> {
             // Some of an underscored column's values have none: a column
             // with no underscore at all was whole numbers to Polars.
             let has = |t: &str| !matches!(literal, Literal::Underscored) || t.contains('_');
-            if every(re) && texts.into_iter().flatten().any(has) {
+            if every(re) && texts.iter().flatten().any(has) {
                 literals.push((column.name().clone(), literal));
             }
         }
@@ -1364,9 +1364,9 @@ fn decimal_columns(frame: LazyFrame, types: &CsvTypes) -> LazyFrame {
                 .otherwise(lit("not a number"))
                 .str()
                 .to_decimal(*places)
-                .cast(DataType::Decimal(Some(38), Some(places + 4)))
-                / lit(100i64).cast(DataType::Decimal(Some(38), Some(0))))
-            .cast(DataType::Decimal(Some(38), Some(places + 2)))
+                .cast(DataType::Decimal(38, places + 4))
+                / lit(100i64).cast(DataType::Decimal(38, 0)))
+            .cast(DataType::Decimal(38, places + 2))
             .alias(name.clone())
         }))
         .chain(decimals.iter().map(|(name, scale)| {
@@ -1396,7 +1396,7 @@ fn decimal_columns(frame: LazyFrame, types: &CsvTypes) -> LazyFrame {
 fn csv_scan(path: &Path, schema: Option<SchemaRef>) -> Result<LazyFrame, String> {
     open(path)?;
     let reader =
-        LazyCsvReader::new(PlPath::from_str(&path.to_string_lossy())).with_has_header(true);
+        LazyCsvReader::new(PlRefPath::new(path.to_string_lossy())).with_has_header(true);
     match schema {
         Some(schema) => reader.with_schema(Some(schema)),
         None => reader
@@ -1414,14 +1414,15 @@ fn sink_to(frame: LazyFrame, target: &Path, marks: Option<KeyValueMetadata>) -> 
     std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     let partial = target.with_extension(format!("partial-{}", std::process::id()));
     let written = frame
-        .sink_parquet(
-            SinkTarget::Path(PlPath::from_str(&partial.to_string_lossy())),
-            ParquetWriteOptions {
+        .sink(
+            SinkDestination::File {
+                target: SinkTarget::Path(PlRefPath::new(partial.to_string_lossy())),
+            },
+            FileWriteFormat::Parquet(std::sync::Arc::new(ParquetWriteOptions {
                 key_value_metadata: marks,
                 ..Default::default()
-            },
-            None,
-            SinkOptions::default(),
+            })),
+            UnifiedSinkArgs::default(),
         )
         .and_then(|f| f.collect_with_engine(Engine::Streaming));
     if let Err(e) = written {

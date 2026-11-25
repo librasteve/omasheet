@@ -744,7 +744,7 @@ mod tests {
         // A 2.5 and a 3: the column is a decimal, and holds both.
         assert_eq!(
             df.column("price").unwrap().dtype(),
-            &DataType::Decimal(Some(38), Some(1))
+            &DataType::Decimal(38, 1)
         );
         assert_eq!(df.column("ok").unwrap().dtype(), &DataType::Boolean);
         assert_eq!(df.column("on").unwrap().dtype(), &DataType::Date);
@@ -756,7 +756,7 @@ mod tests {
         // A key a row has not got is a null, as an explicit null is.
         assert_eq!(df.column("ok").unwrap().null_count(), 1);
         assert_eq!(df.column("price").unwrap().null_count(), 1);
-        for column in df.get_columns() {
+        for column in df.columns() {
             assert!(shown(column.dtype()), "{:?}", column.dtype());
         }
     }
@@ -917,12 +917,12 @@ mod tests {
         // A decimal, holding the 2.5 and the whole numbers beside it.
         assert_eq!(
             df.column("x").unwrap().dtype(),
-            &DataType::Decimal(Some(38), Some(1))
+            &DataType::Decimal(38, 1)
         );
         // 2.5 at one place is 25, as the digits of a decimal at scale 1.
         assert_eq!(
             df.column("x").unwrap().get(HEAD_ROWS + 100).unwrap(),
-            AnyValue::Decimal(25, 1)
+            AnyValue::Decimal(25, 38, 1)
         );
         // Text, holding 7 as it was written and "seven".
         assert_eq!(df.column("s").unwrap().dtype(), &DataType::String);
@@ -955,7 +955,7 @@ mod tests {
         // exponent, is a float.
         assert_eq!(
             df.column("f").unwrap().dtype(),
-            &DataType::Decimal(Some(38), Some(1))
+            &DataType::Decimal(38, 1)
         );
         assert_eq!(
             df.column("a").unwrap().get(1).unwrap(),

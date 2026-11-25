@@ -31,7 +31,7 @@ fn file(dir: &std::path::Path) {
     )
     .expect("a struct")
     .into_series();
-    let mut frame = DataFrame::new(vec![
+    let mut frame = DataFrame::new_infer_height(vec![
         Series::new("Weight".into(), [Some(5000.0), Some(300.0), Some(5.0)]).into_column(),
         sigma.into_column(),
         Series::new("Any".into(), [Some("3m"), Some("10.5 ± 0.3kg"), None]).into_column(),

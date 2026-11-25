@@ -408,12 +408,12 @@ impl Builder {
                 Column::new(name, texts)
                     .str()
                     .map_err(|e| e.to_string())?
-                    .to_decimal(scale)
+                    .to_decimal(38, scale)
                     .map_err(|e| e.to_string())?
                     .into_column()
                     // Whatever precision the digits came to, one for every
                     // batch of the file.
-                    .cast(&DataType::Decimal(Some(38), Some(scale)))
+                    .cast(&DataType::Decimal(38, scale))
                     .map_err(|e| e.to_string())?
             }
             Builder::Date(v) => Column::new(name, std::mem::take(v))
@@ -454,7 +454,7 @@ fn frame(names: &[String], builders: &mut [Builder]) -> Result<DataFrame, String
         .zip(builders.iter_mut())
         .map(|(name, b)| b.finish(name))
         .collect::<Result<Vec<_>, _>>()?;
-    DataFrame::new(columns).map_err(|e| e.to_string())
+    DataFrame::new_infer_height(columns).map_err(|e| e.to_string())
 }
 
 /// Why a write stopped short: the rows are not as the schema said (a value

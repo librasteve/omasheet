@@ -743,13 +743,13 @@ impl<'p> Engine<'p> {
             .collect()
             .ok()
             .filter(|df| windowed || accounted_for(df))
-            .and_then(|df| df.get_columns().first().cloned())
+            .and_then(|df| df.columns().first().cloned())
             .filter(|column| column.len() == len)?;
         // Polars gives arithmetic a dtype of precision `None`; the full 38
         // is what a Parquet write and the schema in the text agree on
         // (D72a).
         match column.dtype() {
-            DataType::Decimal(None, Some(scale)) => {
+            DataType::Decimal(_, scale) => {
                 column.cast(&crate::dtype::decimal(*scale as u32)).ok()
             }
             _ => Some(column),
@@ -951,7 +951,7 @@ impl<'p> Engine<'p> {
         if columns.is_empty() {
             return refused(self);
         }
-        let Ok(frame) = DataFrame::new(columns) else {
+        let Ok(frame) = DataFrame::new_infer_height(columns) else {
             return refused(self);
         };
         // A row an arithmetic of the condition might not fit is one Polars
@@ -974,7 +974,7 @@ impl<'p> Engine<'p> {
             self.filters.borrow_mut().push((t, Attempt::Failed));
             return None;
         };
-        let keep: Option<Vec<usize>> = kept.into_iter().map(|p| Some(p? as usize)).collect();
+        let keep: Option<Vec<usize>> = kept.iter().map(|p| Some(p? as usize)).collect();
         self.filters.borrow_mut().push((t, Attempt::Lowered));
         keep
     }
@@ -1026,7 +1026,7 @@ impl<'p> Engine<'p> {
         if columns.is_empty() || columns.iter().any(|c| c.len() != nrows) {
             return None;
         }
-        let frame = DataFrame::new(columns).ok()?;
+        let frame = DataFrame::new_infer_height(columns).ok()?;
         if risk.is_some_and(|risk| any_at_risk(&frame, risk)) {
             return None;
         }
@@ -1068,7 +1068,7 @@ impl<'p> Engine<'p> {
             }
             by.push(col(name));
         }
-        let Ok(frame) = DataFrame::new(columns) else {
+        let Ok(frame) = DataFrame::new_infer_height(columns) else {
             return refused(self);
         };
         // The same order the engine's own sort puts them in:
@@ -1091,7 +1091,7 @@ impl<'p> Engine<'p> {
             self.filters.borrow_mut().push((t, Attempt::Failed));
             return None;
         };
-        let order: Option<Vec<usize>> = order.into_iter().map(|p| Some(p? as usize)).collect();
+        let order: Option<Vec<usize>> = order.iter().map(|p| Some(p? as usize)).collect();
         self.filters.borrow_mut().push((t, Attempt::Lowered));
         order
     }
@@ -1194,7 +1194,7 @@ impl<'p> Engine<'p> {
                     let Some((frame, cond)) = self.filter_plan(t, node) else {
                         return refused(self);
                     };
-                    for column in frame.take_columns() {
+                    for column in frame.into_columns() {
                         if !columns.iter().any(|held| held.name() == column.name()) {
                             columns.push(column);
                         }
@@ -1222,7 +1222,7 @@ impl<'p> Engine<'p> {
                 Step::Tail(n) => expr = expr.tail(Some(*n)),
             }
         }
-        let Ok(frame) = DataFrame::new(columns) else {
+        let Ok(frame) = DataFrame::new_infer_height(columns) else {
             return refused(self);
         };
         let mut lazy = frame.lazy().with_row_index(ROW_INDEX, None);
@@ -1246,7 +1246,7 @@ impl<'p> Engine<'p> {
             let column = out.column(name).ok()?;
             if matches!(column.dtype(), DataType::Decimal(..)) {
                 for i in 0..column.len() {
-                    if let Ok(AnyValue::Decimal(n, _)) = column.get(i)
+                    if let Ok(AnyValue::Decimal(n, _, _)) = column.get(i)
                         && n.unsigned_abs() >= limit as u128
                     {
                         return refused(self);
@@ -1256,8 +1256,8 @@ impl<'p> Engine<'p> {
         }
         let listed = out.column(ROW_INDEX).ok()?.list().ok()?.clone();
         let mut given = Vec::new();
-        for list in listed.into_iter() {
-            for p in list?.u32().ok()?.into_iter() {
+        for list in listed.amortized_iter() {
+            for p in list?.as_ref().u32().ok()?.iter() {
                 given.push(p? as usize);
             }
         }
@@ -1285,7 +1285,7 @@ impl<'p> Engine<'p> {
             return None;
         }
         if let Some(risk) = risk
-            && any_at_risk(&DataFrame::new(taken.clone()).ok()?, risk)
+            && any_at_risk(&DataFrame::new_infer_height(taken.clone()).ok()?, risk)
         {
             return None;
         }
@@ -1414,7 +1414,7 @@ impl<'p> Engine<'p> {
                 columns.push(column);
             }
         }
-        let Ok(frame) = DataFrame::new(columns) else {
+        let Ok(frame) = DataFrame::new_infer_height(columns) else {
             return refused(self);
         };
         let options = SortMultipleOptions::default()
@@ -1439,7 +1439,7 @@ impl<'p> Engine<'p> {
             let column = out.column(name).ok()?;
             if matches!(column.dtype(), DataType::Decimal(..)) {
                 for i in 0..column.len() {
-                    if let Ok(AnyValue::Decimal(n, _)) = column.get(i)
+                    if let Ok(AnyValue::Decimal(n, _, _)) = column.get(i)
                         && n.unsigned_abs() >= limit as u128
                     {
                         return refused(self);
@@ -1449,12 +1449,13 @@ impl<'p> Engine<'p> {
         }
         let mut groups: Groups = Vec::with_capacity(out.height());
         let listed = out.column(ROW_INDEX).ok()?.list().ok()?.clone();
-        for list in listed.into_iter() {
+        for list in listed.amortized_iter() {
             let list = list?;
             let mut members: Vec<usize> = list
+                .as_ref()
                 .u32()
                 .ok()?
-                .into_iter()
+                .iter()
                 .map(|p| Some(rows[p? as usize]))
                 .collect::<Option<_>>()?;
             // Polars keeps no promise about the order inside a group, and
@@ -1567,7 +1568,7 @@ impl<'p> Engine<'p> {
         for column in lcols.iter().chain(rcols.iter()) {
             if matches!(column.dtype(), DataType::Decimal(..)) {
                 for i in 0..column.len() {
-                    if let Ok(AnyValue::Decimal(n, _)) = column.get(i)
+                    if let Ok(AnyValue::Decimal(n, _, _)) = column.get(i)
                         && n.unsigned_abs() >= limit
                     {
                         return refused(self);
@@ -1575,7 +1576,7 @@ impl<'p> Engine<'p> {
                 }
             }
         }
-        let (Ok(lframe), Ok(rframe)) = (DataFrame::new(lcols), DataFrame::new(rcols)) else {
+        let (Ok(lframe), Ok(rframe)) = (DataFrame::new_infer_height(lcols), DataFrame::new_infer_height(rcols)) else {
             return refused(self);
         };
         let how = if join.left {
@@ -1607,8 +1608,8 @@ impl<'p> Engine<'p> {
         let ls = out.column(LEFT_ROW).ok()?.u32().ok()?.clone();
         let rs = out.column(RIGHT_ROW).ok()?.u32().ok()?.clone();
         let pairs = ls
-            .into_iter()
-            .zip(&rs)
+            .iter()
+            .zip(rs.iter())
             .map(|(l, r)| Some((left.rows[l? as usize], r.map(|r| right.rows[r as usize]))))
             .collect::<Option<Vec<_>>>()?;
         self.filters
@@ -1734,7 +1735,7 @@ impl<'p> Engine<'p> {
                 );
             }
             for column in columns {
-                let part = DataFrame::new(vec![column])?
+                let part = DataFrame::new_infer_height(vec![column])?
                     .lazy()
                     .select(select)
                     .collect()?;
@@ -1959,7 +1960,7 @@ impl<'p> Engine<'p> {
             select.push(hi.alias("hi"));
         }
         let out = match &groups {
-            None => DataFrame::new(vec![column])
+            None => DataFrame::new_infer_height(vec![column])
                 .ok()?
                 .lazy()
                 .select(select)
@@ -2049,7 +2050,7 @@ impl<'p> Engine<'p> {
         if columns.is_empty() {
             return None;
         }
-        let frame = DataFrame::new(columns).ok()?;
+        let frame = DataFrame::new_infer_height(columns).ok()?;
         let expr = match risk {
             // A window function has empty cells of its own, so the empty
             // cell that stands for a result that might not fit cannot be
@@ -5670,7 +5671,7 @@ fn has_room(lo: AnyValue, hi: AnyValue, n: usize, scale: u32) -> Option<bool> {
     // An empty column has no extremes and sums to nothing, which has room
     // anywhere.
     let unscaled = |any: AnyValue| match any {
-        AnyValue::Decimal(n, _) => Some(n),
+        AnyValue::Decimal(n, _, _) => Some(n),
         AnyValue::Null => Some(0),
         _ => None,
     };
@@ -5777,7 +5778,7 @@ fn any_at_risk(frame: &DataFrame, risk: Expr) -> bool {
         .select([risk.any(true)])
         .collect()
         .ok()
-        .and_then(|df| df.get_columns().first()?.bool().ok()?.get(0))
+        .and_then(|df| df.columns().first()?.bool().ok()?.get(0))
         .unwrap_or(true)
 }
 

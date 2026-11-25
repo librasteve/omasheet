@@ -1636,7 +1636,7 @@ fn parquet_imports_a_null_column_as_empty_cells() {
 /// gives a column that has no type of its own.
 fn null_column_file(dir: &std::path::Path) -> std::path::PathBuf {
     use polars::prelude::*;
-    let mut df = DataFrame::new(vec![
+    let mut df = DataFrame::new_infer_height(vec![
         Series::new("Month".into(), ["Jan", "Feb"]).into_column(),
         Series::new_null("Note".into(), 2).into_column(),
     ])
@@ -1730,7 +1730,7 @@ Price : Int
 fn parquet_says_when_a_uint64_is_past_an_int() {
     use polars::prelude::*;
     let write = |values: [u64; 2]| {
-        let mut df = DataFrame::new(vec![Series::new("Big".into(), values).into_column()]).unwrap();
+        let mut df = DataFrame::new_infer_height(vec![Series::new("Big".into(), values).into_column()]).unwrap();
         let mut bytes = Cursor::new(Vec::new());
         ParquetWriter::new(&mut bytes).finish(&mut df).unwrap();
         bytes.into_inner()
@@ -1789,7 +1789,7 @@ fn parquet_drops_a_struct_that_is_not_a_complex() {
         .into_series()
     };
     for (a, b, kept) in [("re", "im", true), ("x", "y", false), ("im", "re", false)] {
-        let mut df = DataFrame::new(vec![
+        let mut df = DataFrame::new_infer_height(vec![
             Series::new("N".into(), [1i64, 2]).into_column(),
             pair(a, b).into_column(),
         ])
@@ -1836,7 +1836,7 @@ fn parquet_round_trips_a_duration() {
 fn parquet_writes_a_tables_integers_at_their_width_and_sign() {
     use polars::prelude::*;
     let dir = scratch("widths");
-    let mut df = DataFrame::new(vec![
+    let mut df = DataFrame::new_infer_height(vec![
         Series::new("Small".into(), [1i64, 200])
             .cast(&DataType::UInt8)
             .unwrap()

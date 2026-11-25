@@ -67,7 +67,7 @@ impl Status {
     /// `rates 2026-11-18 (today)`, for a status bar: or `(cached)` and the like
     /// for rates of an earlier day.
     pub fn short(&self) -> String {
-        self.short_on(&jiff::Zoned::now().date().to_string())
+        self.short_on(&jiff::ZonedDateTime::now().date().to_string())
     }
 
     /// [`Status::short`] as of `today`: rates for that day say so, in place

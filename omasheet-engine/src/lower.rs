@@ -255,12 +255,10 @@ fn inner(node: &Node, cx: &Cx) -> Option<Out> {
 /// and rounded once to `places`, half away from zero, as the engine rounds
 /// it.
 ///
-/// Polars multiplies exactly, at the sum of the two scales, and divides
-/// truncated at the larger scale plus four, and a cast to a smaller scale
-/// truncates too (measured: `decimal-and-fraction` design). So the rounding
-/// is written out: half a unit of the last place is added, away from zero,
-/// and the cast then cuts it. For a quotient that is exact as well, since the
-/// digit that decides the rounding is one the truncation has kept.
+/// Polars multiplies at the larger of the two scales, so the sides are cast to
+/// their sum first (`arith`) and the product is exact. The cast to `places`
+/// then rounds to nearest, a tie to even, where the engine rounds a tie away
+/// from zero: that one case is put right.
 fn settle(places: u32, node: &Node, cx: &Cx) -> Option<Out> {
     let Ir::Binary(op, l, r) = &node.kind else {
         return None;
@@ -286,23 +284,10 @@ fn settle(places: u32, node: &Node, cx: &Cx) -> Option<Out> {
             }
             power
         }
-        BinOp::Div => {
-            // The quotient has the larger scale plus four after its point,
-            // and Polars offers at most 21.
-            if places + 4 > 21 {
-                return None;
-            }
-            let (l, r) = (inner(l, cx)?, inner(r, cx)?);
-            let (x, y) = (exact_scale(&l.dtype)?, exact_scale(&r.dtype)?);
-            if x > places || y > places {
-                return None;
-            }
-            // Both sides at the scale the quotient is wanted to, which is
-            // no loss: it is the larger of theirs or more.
-            let at = decimal(places);
-            let quotient = l.expr.strict_cast(at.clone()) / r.expr.strict_cast(at);
-            Out::new(quotient, decimal(places + 4))?
-        }
+        // Polars 0.55 rounds a decimal quotient to nearest at the larger scale
+        // of its sides, where 0.51 truncated at that scale plus four. Rounded
+        // there and again here, a quotient can differ from the engine's single
+        // rounding in its last place, so a quotient is the engine's.
         _ => return None,
     };
     let held = exact_scale(&exact.dtype)?;
@@ -310,16 +295,24 @@ fn settle(places: u32, node: &Node, cx: &Cx) -> Option<Out> {
     if held <= places {
         return Out::new(exact.expr.strict_cast(target.clone()), target);
     }
-    // Half a unit of the place to keep, at the scale it is held at.
-    let half = AnyValue::Decimal(5 * 10i128.pow(held - places - 1), held as usize);
+    // A cast to a smaller scale rounds to the nearest, a tie to the even
+    // one (Polars 0.55); the engine rounds a tie away from zero. So only a
+    // tie, a remainder of exactly half a unit of the place to keep, is
+    // looked for, where the cast went toward zero, and moved one unit on.
+    let half = AnyValue::Decimal(5 * 10i128.pow(held - places - 1), 38, held as usize);
     let at = decimal(held);
     let half = lit(Scalar::new(at.clone(), half));
-    let zero = lit(Scalar::new(at.clone(), AnyValue::Decimal(0, held as usize)));
+    let unit = lit(Scalar::new(target.clone(), AnyValue::Decimal(1, 38, places as usize)));
+    let zero = lit(Scalar::new(at.clone(), AnyValue::Decimal(0, 38, held as usize)));
     let x = exact.expr;
-    let rounded = when(x.clone().gt_eq(zero))
-        .then(x.clone() + half.clone())
-        .otherwise(x - half);
-    Out::new(rounded.cast(target.clone()), target)
+    let cast = x.clone().cast(target.clone());
+    let remainder = x.clone() - cast.clone().cast(at);
+    let rounded = when(remainder.clone().eq(half.clone()).and(x.clone().gt_eq(zero.clone())))
+        .then(cast.clone() + unit.clone())
+        .when(remainder.eq(zero.clone() - half).and(x.lt(zero)))
+        .then(cast.clone() - unit)
+        .otherwise(cast);
+    Out::new(rounded, target)
 }
 
 /// A window function (`cum_sum`, `diff`, `rank`, `rolling_min`...) down a
@@ -389,7 +382,7 @@ fn window(spec: Spec, args: &[Node], cx: &Cx) -> Option<Out> {
     // ranks and fills it, but has no rolling window, no cumulative product
     // and no ratio of one that is the engine's.
     let places = match value.dtype {
-        DataType::Decimal(_, Some(s)) => Some(s as i32),
+        DataType::Decimal(_, s) => Some(s as i32),
         _ => None,
     };
     let decimal = places.is_some();
@@ -607,7 +600,7 @@ fn literal(l: &Lit) -> Option<Out> {
                 .ok()
                 .filter(|s| *s <= MAX_PRECISION)?;
             let dtype = decimal(scale);
-            let value = AnyValue::Decimal(d.unscaled(), scale as usize);
+            let value = AnyValue::Decimal(d.unscaled(), 38, scale as usize);
             Out::new(lit(Scalar::new(dtype.clone(), value)), dtype)
         }
         Lit::Float(f) => Out::new(lit(*f), DataType::Float64),
@@ -736,7 +729,7 @@ fn call(func: Func, args: &[Node], cx: &Cx) -> Option<Out> {
         if text.dtype != DataType::String {
             return None;
         }
-        let parts = lit(Series::new(PlSmallStr::EMPTY, parts)).implode();
+        let parts = lit(Series::new(PlSmallStr::EMPTY, parts)).implode(true);
         return Out::new(
             text.expr.str().contains_any(parts, false),
             DataType::Boolean,
@@ -882,7 +875,7 @@ fn within(needle: Out, hay: &Node, cx: &Cx) -> Option<Out> {
                 Series::from_any_values_and_dtype(PlSmallStr::EMPTY, &values, &needle.dtype, true)
                     .ok()?;
             Out::new(
-                needle.expr.is_in(lit(list).implode(), false),
+                needle.expr.is_in(lit(list).implode(true), false),
                 DataType::Boolean,
             )
         }
@@ -1210,10 +1203,10 @@ fn arith(op: BinOp, l: Out, r: Out, cx: &Cx) -> Option<Out> {
             // holds 38 digits where an `i64` holds 19, so a column of whole
             // numbers that overflows Polars' own addition still has an
             // answer on the engine.
-            let (ld, rd) = match op {
-                BinOp::Mul => (decimal(x), decimal(y)),
-                _ => (decimal(scale), decimal(scale)),
-            };
+            // A product is cast so as well: Polars 0.55 multiplies at the larger
+            // of the two scales and rounds there, so both sides are brought to
+            // the scale the product is wanted at, `x + y`, and it is exact.
+            let (ld, rd) = (decimal(scale), decimal(scale));
             // Polars holds a decimal at 38 digits and wraps, or answers an
             // error, where it needs a 39th; the engine moves its point. So
             // the size of what Polars has to hold is estimated in floating
@@ -1222,26 +1215,24 @@ fn arith(op: BinOp, l: Out, r: Out, cx: &Cx) -> Option<Out> {
             // 10^16, so that is margin enough, and a wider one would give up
             // a `Fraction` column at scale 38 whose sum plainly fits.
             //
-            // For `+` and `-` that is the result, at the scale both sides
-            // were cast to. For `*` it is not the result: Polars brings the
-            // two sides to the larger of their scales and multiplies those
-            // numbers before it scales the answer back, so what must fit is
-            // the product at *twice* the larger scale, however small the
-            // answer is. Found by the grid at the ends of the ranges
-            // (`kernel.rs`): `1335897.6 * 244800296630449` in a column of
-            // scale 10 holds a 33-digit answer, and wraps.
+            // What must fit, at the scale both sides were cast to, is each
+            // side, and for `*` the product as well, which Polars multiplies
+            // in 256 bits and rounds back to that scale.
             let (lf, rf) = (
                 l.expr.clone().cast(DataType::Float64),
                 r.expr.clone().cast(DataType::Float64),
             );
-            let (size, held_at) = match op {
-                BinOp::Mul => (lf * rf, 2 * x.max(y)),
-                BinOp::Add => (lf + rf, scale),
-                _ => (lf - rf, scale),
-            };
-            let limit = 9.9e37 / 10f64.powi(held_at as i32);
-            let beyond = size.clone().gt_eq(lit(limit)).or(size.lt_eq(lit(-limit)));
-            cx.risks.borrow_mut().push(beyond);
+            let limit = 9.9e37 / 10f64.powi(scale as i32);
+            let beyond = |size: Expr| size.clone().gt_eq(lit(limit)).or(size.lt_eq(lit(-limit)));
+            match op {
+                BinOp::Mul => {
+                    cx.risks.borrow_mut().push(beyond(lf.clone()));
+                    cx.risks.borrow_mut().push(beyond(rf.clone()));
+                    cx.risks.borrow_mut().push(beyond(lf * rf));
+                }
+                BinOp::Add => cx.risks.borrow_mut().push(beyond(lf + rf)),
+                _ => cx.risks.borrow_mut().push(beyond(lf - rf)),
+            }
             let expr = apply(l.expr.strict_cast(ld), r.expr.strict_cast(rd));
             Out::new(expr, decimal(scale))
         }
@@ -1328,7 +1319,7 @@ pub fn exact_scale(dtype: &DataType) -> Option<u32> {
         | DataType::UInt16
         | DataType::UInt32
         | DataType::UInt64 => Some(0),
-        DataType::Decimal(_, scale) => Some(scale.unwrap_or(0) as u32),
+        DataType::Decimal(_, scale) => Some(*scale as u32),
         _ => None,
     }
 }
