@@ -7689,6 +7689,13 @@ ApplicationWindow {
                             maximumLength: 4
                             inputMethodHints: Qt.ImhDigitsOnly
                             validator: IntValidator { bottom: 100; top: 4000 }
+                            id: widthField
+                            // Left and Right pass between the two, the number selected to type over.
+                            onActiveFocusChanged: if (activeFocus) selectAll()
+                            Keys.onRightPressed: function(event) { heightField.forceActiveFocus(); event.accepted = true; }
+                            Keys.onLeftPressed: function(event) { event.accepted = true; }
+                            // Tab goes on to Height, then to the next section.
+                            Keys.onTabPressed: function(event) { heightField.forceActiveFocus(); event.accepted = true; }
                             text: win.plotInfo.controls.width || ""
                             placeholderText: "640"
                             onCommitted: function(value) { win.setPlot("width", value) }
@@ -7705,6 +7712,12 @@ ApplicationWindow {
                             maximumLength: 4
                             inputMethodHints: Qt.ImhDigitsOnly
                             validator: IntValidator { bottom: 100; top: 4000 }
+                            id: heightField
+                            onActiveFocusChanged: if (activeFocus) selectAll()
+                            Keys.onLeftPressed: function(event) { widthField.forceActiveFocus(); event.accepted = true; }
+                            Keys.onRightPressed: function(event) { event.accepted = true; }
+                            // Shift+Tab goes back to Width, then to the section before.
+                            Keys.onBacktabPressed: function(event) { widthField.forceActiveFocus(); event.accepted = true; }
                             text: win.plotInfo.controls.height || ""
                             placeholderText: "360"
                             onCommitted: function(value) { win.setPlot("height", value) }

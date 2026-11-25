@@ -968,7 +968,9 @@ impl qobject::File {
         let Ok(text) = omasheet_interop::table_source(path) else {
             return false;
         };
-        let doc = document(&text);
+        let mut doc = document(&text);
+        // So that formulas can name the file's columns.
+        doc.declare_view_columns();
         // A CSV or JSON file is read through a copy, which `convert_tables`
         // writes.
         let csv = omasheet_engine::table::is_converted(path);

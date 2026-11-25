@@ -1139,7 +1139,7 @@ fn math_of(m: MathFn, v: &Value) -> Result<Value, String> {
             return Ok(Value::int(r.signum()));
         }
         (Value::Fraction(r), MathFn::Sign) => return Ok(Value::int(i64::from(r.signum()))),
-        (Value::Decimal(r), MathFn::Round) => return Ok(whole(r.round())),
+        (Value::Decimal(r), MathFn::Round) => return Ok(whole(r.round_even())),
         (Value::Decimal(r), MathFn::Floor) => return Ok(whole(r.floor())),
         (Value::Decimal(r), MathFn::Ceil) => return Ok(whole(r.ceil())),
         // A whole number of a fraction: an `Integer` where it fits one.
@@ -1307,13 +1307,13 @@ fn complex_math(m: MathFn, re: f64, im: f64) -> Result<Value, String> {
 /// The nearest multiple of `scale`, which is what `round(x, 0.01)` means:
 /// `round(x / scale) * scale`.
 ///
-/// A number to `places` decimal places, as Polars rounds it: a half away
-/// from zero, and a number already shown in fewer places left as it is,
+/// A number to `places` decimal places, as Polars rounds a decimal: a tie to
+/// the even digit, and a number already shown in fewer places left as it is,
 /// since a `Decimal` carries its scale and widening it would only add
 /// zeros. An `Int` is whole already, so it is itself.
 pub fn round_digits(x: &Value, places: i64) -> Result<Value, String> {
     let places = i32::try_from(places.max(0)).unwrap_or(i32::MAX);
-    let narrowed = |d: &Dec| d.rescale(places.min(d.scale())).unwrap_or(*d);
+    let narrowed = |d: &Dec| d.rescale_even(places.min(d.scale())).unwrap_or(*d);
     Ok(match x {
         Value::Null => Value::Null,
         Value::Int(_, _) => x.clone(),

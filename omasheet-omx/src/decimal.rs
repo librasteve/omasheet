@@ -331,6 +331,31 @@ impl Dec {
         self.rescale(0).unwrap_or_else(|| self.trunc())
     }
 
+    /// To the nearest whole number, a tie to the even one, as Polars rounds.
+    pub fn round_even(self) -> Dec {
+        self.rescale_even(0).unwrap_or_else(|| self.trunc())
+    }
+
+    /// The same number at `scale`, rounded to the nearest with a tie to the
+    /// even digit, as Polars' `round` does. Widening is as `rescale`.
+    pub fn rescale_even(self, scale: i32) -> Option<Dec> {
+        let step = (scale as i64 - self.scale as i64).unsigned_abs();
+        if scale >= self.scale || step > MAX_PRECISION as u64 {
+            return self.rescale(scale);
+        }
+        let factor = pow10(step as u32)?;
+        let whole = self.unscaled / factor;
+        let rest = self.unscaled % factor;
+        let twice = rest.unsigned_abs() * 2;
+        let away = twice > factor.unsigned_abs() || (twice == factor.unsigned_abs() && whole % 2 != 0);
+        let bump = if away {
+            if self.unscaled < 0 { -1 } else { 1 }
+        } else {
+            0
+        };
+        Dec::new(whole + bump, scale)
+    }
+
     /// The same number at `scale`, or `None` if widening it overflows. A
     /// narrower scale rounds half away from zero.
     pub fn rescale(self, scale: i32) -> Option<Dec> {

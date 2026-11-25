@@ -144,6 +144,10 @@ pub fn origin_in(engine: &Engine, program: &Program, plot: &Plot) -> (bool, bool
         engine.take_diags();
         return (false, false);
     };
+    if view.rows.len() > MAX_PLOT_ROWS {
+        return (false, false);
+    }
+
     let cols = &program.sheets[view.sheet].cols;
     let find = |name: &str| view.cols.iter().copied().find(|&c| cols[c].name == name);
     let x_col = plot.x.as_deref().and_then(find).or(view.cols.first().copied());
@@ -210,6 +214,23 @@ pub fn draw(
     draw_as(engine, program, plot, &plot.kind, size)
 }
 
+/// The most rows of `data` a plot will take; a sheet longer than this is
+/// refused with a message, not drawn.
+pub const MAX_PLOT_ROWS: usize = 9_999;
+
+/// A count with a comma between its thousands.
+fn with_commas(n: usize) -> String {
+    let digits = n.to_string();
+    let mut out = String::new();
+    for (i, c) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i) % 3 == 0 {
+            out.push(',');
+        }
+        out.push(c);
+    }
+    out
+}
+
 /// As [`draw`], of kind `kind` in place of the plot's own: to find which kinds
 /// its data suits.
 pub fn draw_as(
@@ -237,6 +258,16 @@ pub fn draw_as(
             });
         }
     };
+
+    if view.rows.len() > MAX_PLOT_ROWS {
+        return Err(one(
+            plot.data_span,
+            format!(
+                "Only sheets with fewer than {} lines may be plotted: use head, filter or group_by to reduce it",
+                with_commas(MAX_PLOT_ROWS + 1)
+            ),
+        ));
+    }
 
     let cols = &program.sheets[view.sheet].cols;
     let find = |name: &str| view.cols.iter().copied().find(|&c| cols[c].name == name);

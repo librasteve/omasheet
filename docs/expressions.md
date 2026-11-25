@@ -67,11 +67,13 @@ same `Float` back, `0.30000000000000004`, and always fits.
 
 There are two rules, and which applies depends on whether a number is being worked out or only shown.
 
-Arithmetic rounds a tie away from zero, as school does. A quotient, a product that has to fit a column's places, `round(x)`, `round(x, 2)`, a conversion to a `Decimal` of fewer places and a `Fraction` turned into a `Decimal` all do: `round(2.5)` is `3`, `round(-2.5)` is `-3`, `round(0.125, 2)` is `0.13`, and `round(0.5)` is `1`. A tie is a value exactly half way between two results, so `0.125` to two places, and not `0.1250001`, which is simply nearer one of them. The same holds when Polars calculates the column (see Calculated in Polars): it is checked against the engine, and a case where Polars rounds differently is left to the engine.
+Arithmetic rounds a tie away from zero, as school does. A quotient, a product that has to fit a column's places, a conversion to a `Decimal` of fewer places and a `Fraction` turned into a `Decimal` all do, so `0.5` converted to a whole number is `1` and `0.125` to two places is `0.13`. A tie is a value exactly half way between two results, so `0.125` to two places, and not `0.1250001`, which is simply nearer one of them. The same holds when Polars calculates the column (see Calculated in Polars): it is checked against the engine, and a case where Polars rounds differently is left to the engine.
 
 A number shown by a column's format, `'.2f`, or by `.fmt()`, is rounded to the nearest and a tie goes to the even digit, which is banker's rounding and what C's `printf` does. So `Decimal[3; .2f]` shows `0.125` as `0.12` and `0.375` as `0.38`, and `2.675` as `2.68`. A `Float` is shown from its binary value, which is rarely a tie: `2.675` as a `Float` is a little below it, and is shown as `2.67`, as `printf` shows it. Showing does not change the value, which the cell editor, the file and `--exact` hold in full.
 
-To round a value, and not only show it, use `round(x, n)`: it gives the tie away from zero in the file, whatever the column shows. A shown total of shown prices can then differ by a cent from the sum of what was shown; sum the rounded values, `Price.round(2).sum()`, when the shown ones must add up.
+`round(x)` and `round(x, n)` of a `Decimal` follow Polars: a tie goes to the even digit, so `round(2.5)` is `2`, `round(3.5)` is `4`, `round(0.125, 2)` is `0.12` and `round(2.785, 2)` is `2.78`. A `Float` is rounded from its binary value, where `round(2.5e0)` is `3`.
+
+To round a value, and not only show it, use `round(x, n)`: for a `Decimal` it ties the same way `.2f` shows, and it changes the value in the file, whatever the column shows. A shown total of shown prices can still differ by a cent from the sum of what was shown; sum the rounded values, `Price.round(2).sum()`, when the shown ones must add up.
 
 A `Percent` is an exact number shown as so many in a hundred: `20%` is `1/5`.
 It is rounded to two digits after the point, `41.67%`, and `--exact` gives

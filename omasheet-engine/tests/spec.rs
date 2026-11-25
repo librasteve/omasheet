@@ -985,7 +985,7 @@ fn math_functions() {
     assert_eq!(calc("[sign(-3), sign(0), sign(1/2)]"), "[-1, 0, 1]");
     assert_eq!(calc("round(2.5e0)"), "3");
     // With a second argument, to that many decimal places, as Polars has
-    // it. The number keeps its own type, and a half goes away from zero.
+    // it. The number keeps its own type, and a Decimal's tie goes to the even digit.
     assert_eq!(calc("round(3.14159, 2)"), "3.14");
     assert_eq!(calc("round(19.74, 1)"), "19.7");
     assert_eq!(
@@ -994,10 +994,11 @@ fn math_functions() {
     );
     assert_eq!(calc("round(pi, 3)"), "3.142");
     assert_eq!(calc("(3.14159).round(3)"), "3.142");
-    // Scaling by a power of ten keeps a Float and a Decimal in agreement
-    // here, where dividing by the multiple would not have: 2.785 as a Float
-    // is a shade over it, and 2.785 / 0.01 is 278.49999999999994.
-    assert_eq!(calc("round(2.785, 2)"), "2.79");
+    // A Decimal's tie goes to the even digit, as Polars rounds it; 2.785 as
+    // a Float is a shade over its tie, so it goes up.
+    assert_eq!(calc("round(2.785, 2)"), "2.78");
+    assert_eq!(calc("round(2.795, 2)"), "2.8");
+    assert_eq!(calc("round([2.5, 3.5, -2.5, 0.5])"), "[2, 4, -2, 0]");
     assert_eq!(calc("round(2.785e0, 2)"), "2.79");
     // A whole number has no places to lose, and an Inf none to round to.
     assert_eq!(calc("round(1234, 2)"), "1234");

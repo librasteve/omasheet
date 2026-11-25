@@ -1879,7 +1879,11 @@ impl<'a> Checker<'a> {
                         .iter()
                         .filter_map(|&c| Some(self.sheets[shape.sheet].cols.get(c)?.name.clone()))
                         .collect();
-                    let named = x.iter().chain(y.iter());
+                    // A view of a file that declares no columns has none to
+                    // check against until the file is read: then they are
+                    // the file's own.
+                    let unread = names.is_empty() && self.sheets[shape.sheet].source.is_some();
+                    let named = x.iter().chain(y.iter()).filter(|_| !unread);
                     let mut bad = Vec::new();
                     for (n, at) in named {
                         if !names.contains(n) {
@@ -1893,7 +1897,7 @@ impl<'a> Checker<'a> {
                             format!("its columns are {}", names.join(", ")),
                         );
                     }
-                    if y.is_empty() && names.len() < 2 {
+                    if y.is_empty() && names.len() < 2 && !unread {
                         self.err(*span, "`data` has no column of values besides `x`");
                     }
                     shown = Some(());

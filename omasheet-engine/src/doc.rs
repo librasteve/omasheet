@@ -3233,7 +3233,44 @@ impl Document {
     /// Replace the whole text, as written by hand, as one undoable step,
     /// with the lines of every sheet aligned. Returns whether it changed.
     pub fn set_text(&mut self, text: &str) -> bool {
-        self.commit(aligned(text))
+        self.as_one(|doc| {
+            doc.commit(aligned(text));
+            doc.declare_view_columns();
+        })
+    }
+
+    /// Write the schema lines of every `view` that has none, from the
+    /// columns its file holds, so that formulas can name them. A file that
+    /// cannot be read, or has a column with no type or no usable name,
+    /// leaves its view as it was.
+    pub fn declare_view_columns(&mut self) -> bool {
+        let ast = self.ast();
+        let mut text = self.text.clone();
+        let mut done = false;
+        // Last first, so that an insertion leaves the places before it be.
+        for decl in ast.sheets.iter().rev() {
+            let Some(source) = decl.source.as_ref() else {
+                continue;
+            };
+            if !decl.schema.is_empty() {
+                continue;
+            }
+            let Some(sheet) = self.snapshot.sheets.iter().find(|t| t.name == decl.name) else {
+                continue;
+            };
+            let Some(lines) = schema_lines(&sheet.columns, &plain_identifier) else {
+                continue;
+            };
+            if lines.is_empty() {
+                continue;
+            }
+            let end = source.expr_span.end as usize;
+            let end = text[end..].find('\n').map_or(text.len(), |k| end + k + 1);
+            let head = if text[..end].ends_with('\n') { "\n" } else { "\n\n" };
+            text.insert_str(end, &format!("{head}{lines}"));
+            done = true;
+        }
+        done && self.commit(text)
     }
 
     /// Make several edits as one undoable step. Returns whether they
@@ -8280,6 +8317,24 @@ mod tests {
     }
 
     #[test]
+    fn a_plot_is_added_over_a_csv_view_that_declares_no_columns() {
+        let dir = std::env::temp_dir().join(format!("omasheet-csvp-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        test_cache();
+        let mut csv = String::from("id,amount\n");
+        // Big enough to be read from a sample until its copy is written.
+        for i in 0..300_000 {
+            csv.push_str(&format!("{i},{}.5\n", i * 2));
+        }
+        std::fs::write(dir.join("p.csv"), &csv).unwrap();
+        let mut doc = Document::from_text("view T := dataframe['p.csv']\n");
+        doc.set_base(dir.to_str().unwrap());
+        assert_eq!(doc.add_plot("P", "line", "T"), Ok(()));
+        assert_eq!(doc.plot_columns("P"), vec!["id", "amount"]);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
     fn a_csv_table_shows_its_sample_and_then_its_copy_alike() {
         let dir = std::env::temp_dir().join(format!("omasheet-csvt-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
@@ -10764,5 +10819,21 @@ mod tests {
         assert_eq!(doc.unfolded_rows(1, &[0]), [0, 4, 5, 6]);
         // With the head taken away, its summary shows in its place.
         assert_eq!(doc.unfolded_rows_without(1, &[0], &[0]), [0, 3, 4, 5, 6]);
+    }
+}
+
+#[cfg(test)]
+mod declare_view_columns_tests {
+    use super::*;
+
+    #[test]
+    fn a_view_typed_by_hand_gets_its_column_lines() {
+        let mut doc = Document::from_text("sheet S\n\n| A |\n| - |\n|   |\n");
+        doc.set_base(concat!(env!("CARGO_MANIFEST_DIR"), "/../demo_data"));
+        doc.set_text("view Syn := dataframe['synthetic-10mb.csv']\n\nsheet Small := Syn |> filter(id < 20000) |> head(3)\n");
+        assert!(doc.text().contains("\nid : Integer\n"), "{}", doc.text());
+        assert!(doc.snapshot().problems.is_empty(), "{:?}", doc.snapshot().problems);
+        // Once written they are not written again.
+        assert!(!doc.declare_view_columns());
     }
 }
