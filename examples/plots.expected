@@ -68,6 +68,16 @@ EDF      | 26.3p⋅kWh⁻¹
 Ovo      | 28.1p⋅kWh⁻¹
 Shell    | 25.9p⋅kWh⁻¹
 
+sheet Spend
+
+Category  | Amount
+----------|---------
+Rent      | £1200.00
+Food      | £450.00
+Transport | £180.00
+Energy    | £130.00
+Leisure   | £240.00
+
 sheet Gravity
 
 Lab        | G [m⋅s⁻²]

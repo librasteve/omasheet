@@ -117,6 +117,24 @@ title: Electricity unit rate
 units: both
 labels: both
 
+sheet Spend
+
+Amount : Currency[GBP; $]
+
+| Category  | Amount |
+| --------- | ------ |
+| Rent      | 1200   |
+| Food      | 450    |
+| Transport | 180    |
+| Energy    | 130    |
+| Leisure   | 240    |
+
+// Each value as a share of the whole.
+plot Share
+type: pie
+data: Spend
+title: Where the month's money goes
+
 sheet Gravity
 
 G : Acceleration[m.s^-2]

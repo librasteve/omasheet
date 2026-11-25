@@ -23,6 +23,12 @@ A price for each unit of energy is kept in pounds and shown in pence with `$p`; 
 
 {{ UnitRate }}
 
+## Pie
+
+Each value as a share of the whole.
+
+{{ Share }}
+
 ## Candle for uncertainty
 
 A body of one standard deviation and a wick of two.

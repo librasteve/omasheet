@@ -118,7 +118,7 @@ fn every_kind_of_plot_draws_from_the_example() {
     let text = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../examples/plots.omx")).unwrap();
     let doc = Document::from_text(&text);
     let names = doc.plots();
-    assert_eq!(names.len(), 16);
+    assert_eq!(names.len(), 17);
     for name in names {
         let svg = doc.plot_svg(&name, (640, 360)).unwrap_or_else(|e| panic!("{name}: {e}"));
         assert!(svg.starts_with("<svg") && !svg.contains("\n\n"), "{name}");

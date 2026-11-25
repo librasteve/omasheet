@@ -729,5 +729,5 @@ fn render_matches_the_expected_plots() {
     assert!(out.status.success(), "{}", stderr(&out));
     let expected = std::fs::read_to_string(root().join("examples/plots-report.expected")).unwrap();
     assert_eq!(stdout(&out), expected);
-    assert_eq!(expected.matches("<svg").count(), 16);
+    assert_eq!(expected.matches("<svg").count(), 17);
 }
