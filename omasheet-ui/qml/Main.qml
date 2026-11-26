@@ -671,19 +671,24 @@ ApplicationWindow {
     readonly property int setPopupWidth: Math.min(Math.round(fontSize * 30), width - 16)
     function placeBeside(box, item) {
         var lap = 2;
-        var last = item.index === selLeft && selRight > selLeft
-            ? headCells.itemAt(selRight) || item : item;
-        // The edge of the last column, from the first.
-        function edge() {
+        // Held as numbers: the head cells are made anew as the columns
+        // change, and one held onto may be gone.
+        var first = item.index;
+        var last = first === selLeft && selRight > selLeft ? selRight : first;
+        var onRight = true, held = 0;
+        function place() {
             // Read so that the place follows the widths.
-            var widths = win.colWidths, own = item.width;
-            return last.mapToItem(item, last.width - lap, 0).x;
+            var widths = win.colWidths;
+            var a = headCells.itemAt(first), b = headCells.itemAt(last);
+            if (a && b) {
+                var own = a.width + b.width;
+                held = onRight ? b.mapToItem(a, b.width - lap, 0).x
+                    : Math.max(8 - a.mapToItem(null, 0, 0).x, lap - box.width);
+            }
+            return held;
         }
-        var onRight = item.mapToItem(null, edge(), 0).x + box.width <= win.width - 8;
-        box.x = Qt.binding(function() {
-            return onRight ? edge()
-                : Math.max(-item.mapToItem(null, 0, 0).x + 8, lap - box.width);
-        });
+        onRight = item.mapToItem(null, place(), 0).x + box.width <= win.width - 8;
+        box.x = Qt.binding(place);
         // Another Set panel already open: this one is cascaded below it, so
         // that every title bar stays in view, and no further across.
         var others = 0;
@@ -2352,6 +2357,38 @@ ApplicationWindow {
                 return boxes[i].color;
         }
         return "";
+    }
+
+    // The edge of a pane: a line, and a place to take hold of to change its
+    // width. A grip half way down says that it can be dragged, since not
+    // every desktop shows the pointer change plainly; both take the accent
+    // under the pointer.
+    component PaneEdge: MouseArea {
+        id: paneEdge
+        readonly property bool lit: containsMouse || pressed
+        // Where the line is, from the left of this.
+        property int lineAt: 3
+        x: -lineAt
+        z: 2
+        width: 9
+        height: parent.height
+        hoverEnabled: true
+        cursorShape: Qt.SplitHCursor
+        Rectangle {
+            x: paneEdge.lineAt
+            width: paneEdge.lit ? 2 : 1
+            height: parent.height
+            color: paneEdge.lit ? win.accentColor : win.lineColor
+        }
+        Rectangle {
+            x: Math.max(0, paneEdge.lineAt - 2)
+            anchors.verticalCenter: parent.verticalCenter
+            width: 6
+            height: Math.min(44, parent.height)
+            radius: 3
+            color: paneEdge.lit ? win.accentColor : Qt.tint(win.pageColor,
+                Qt.rgba(win.textColor.r, win.textColor.g, win.textColor.b, 0.5))
+        }
     }
 
     // Marks under the references in a formula's text, each in the colour
@@ -6866,17 +6903,9 @@ ApplicationWindow {
         onWidthChanged: plotTimer.restart()
         onHeightChanged: plotTimer.restart()
 
-        // The edge: a line, and a place to take hold of to change the width.
-        Rectangle {
-            width: 1
-            height: parent.height
-            color: win.lineColor
-        }
-        MouseArea {
-            x: -3
-            width: 7
-            height: parent.height
-            cursorShape: Qt.SplitHCursor
+        PaneEdge {
+            // The pane clips, so the line and the grip are inside it.
+            lineAt: 0
             property real startX: 0
             property int startWidth: 0
             onPressed: function(mouse) {
@@ -7122,18 +7151,8 @@ ApplicationWindow {
         height: grid.height
         color: win.pageColor
 
-        Rectangle {
-            width: 1
-            height: parent.height
-            color: win.lineColor
-        }
         // The edge: take hold of it to change the width of the settings.
-        MouseArea {
-            x: -3
-            z: 2
-            width: 7
-            height: parent.height
-            cursorShape: Qt.SplitHCursor
+        PaneEdge {
             property real startX: 0
             property real startWidth: 0
             onPressed: function(mouse) {
