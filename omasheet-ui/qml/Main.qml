@@ -902,6 +902,22 @@ ApplicationWindow {
         }).replace(/([^.])\.(?=[^.])/g, "$1\u22c5");
     }
 
+    // The column whose head is under the pointer, or -1, and what the
+    // message bar says of it: its type with its format written out, which
+    // the head has no room for.
+    property int hoverCol: -1
+    readonly property string headTip: {
+        var col = !sheet || sheet.isConsts ? null : sheet.columns[hoverCol];
+        if (!col)
+            return "";
+        var type = col.type, format = col.format || col.unit || "";
+        // A decimal's places are in the brackets its format joins.
+        if (format)
+            type = type.charAt(type.length - 1) === "]" ? type.slice(0, -1) + "; " + format + "]"
+                : type + "[" + format + "]";
+        return col.name + (type ? " : " + type : "");
+    }
+
     function typeLabel(col) {
         // `Quantity` is long, and is set `Q` where it has a unit to show.
         if (isQuantityType(col.type) && col.unit)
@@ -5429,6 +5445,14 @@ ApplicationWindow {
                                 MarkEdge { visible: headCell.marked; width: parent.width; height: 1 }
                                 MarkEdge { visible: headCell.marked && headCell.index === win.outline.left && !win.outline.rows; width: 1; height: parent.height }
                                 MarkEdge { visible: headCell.marked && headCell.index === win.outline.right; anchors.right: parent.right; width: 1; height: parent.height }
+                                HoverHandler {
+                                    onHoveredChanged: {
+                                        if (hovered)
+                                            win.hoverCol = headCell.index;
+                                        else if (win.hoverCol === headCell.index)
+                                            win.hoverCol = -1;
+                                    }
+                                }
                                 MouseArea {
                                     anchors.fill: parent
                                     hoverEnabled: true
@@ -6775,7 +6799,7 @@ ApplicationWindow {
                 readonly property bool showsEntryHint: (win.entryHint.length > 0 || plotNoteText.length > 0) && win.hint.length === 0 && win.styleWarning.length === 0
                     && win.notice.length === 0 && win.cellWarning.length === 0 && win.cellFull.length === 0
                     && !moving && !win.formulaCell && (file.status.length === 0 || !statusShown) && win.busyText.length === 0 && !win.filterPending
-                opacity: faded && win.hint.length === 0 && win.cellWarning.length === 0 && win.styleWarning.length === 0 && !showsEntryHint ? 0 : 1
+                opacity: faded && win.hint.length === 0 && win.headTip.length === 0 && win.cellWarning.length === 0 && win.styleWarning.length === 0 && !showsEntryHint ? 0 : 1
                 Behavior on opacity { NumberAnimation { duration: 700 } }
                 onTextChanged: {
                     faded = false;
@@ -6796,6 +6820,7 @@ ApplicationWindow {
                     : win.filterPending ? "Filtering\u2026"
                     : win.hint.length > 0 ? win.hint
                     : win.notice.length > 0 ? win.notice
+                    : win.headTip.length > 0 ? win.headTip
                     : win.cellWarning.length > 0 ? win.cellWarning
                     : win.cellFull.length > 0 ? win.cellFull
                     : moving ? "Select a " + (win.grabbed.rows ? "row" : "column") + " and paste to move here (Esc cancels)"
@@ -6812,6 +6837,7 @@ ApplicationWindow {
                 color: win.styleWarning.length > 0 ? win.warningColor
                     : win.hint.length > 0 ? (win.hintBad ? win.errorColor : win.mutedColor)
                     : win.notice.length > 0 ? win.errorColor
+                    : win.headTip.length > 0 ? win.mutedColor
                     : win.cellWarning.length > 0 ? win.warningColor
                     : win.cellFailed ? win.errorColor : win.mutedColor
                 font.family: win.font.family

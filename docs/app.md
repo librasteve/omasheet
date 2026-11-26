@@ -188,7 +188,7 @@ Press F2 on a cell holding a formula, or type one, and each thing it reads is li
 
 ### Moving columns
 
-Click a column's header to select it, then drag the header to move it: a mark shows where it will land, and the drop is one step to undo. Held near either edge, the grid scrolls sideways to reach a column off screen. Select several columns first (drag along the headers, or Shift-click) and drag one of them to move them together. Dragging from a header that is not selected selects along the headers instead. The circle at the right of a header opens its popup instead, and does not drag.
+Click a column's header to select it, then drag the header to move it: a mark shows where it will land, and the drop is one step to undo. Held near either edge, the grid scrolls sideways to reach a column off screen. Select several columns first (drag along the headers, or Shift-click) and drag one of them to move them together. Dragging from a header that is not selected selects along the headers instead. The circle at the right of a header opens its popup instead, and does not drag. With the pointer over a header, the message bar gives the column's name and its type with the format in full, as `Net : Decimal[.2f]`.
 
 ### A sheet to another file
 
