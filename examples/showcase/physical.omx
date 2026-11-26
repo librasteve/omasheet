@@ -1,0 +1,24 @@
+sheet Galaxy
+
+Value : Fraction
+
+| Item                         | Value                               | Units |
+| ---------------------------- | ----------------------------------- | ----- |
+| Planets on our galaxy        | 3_200_000_000_000                   |       |
+| Count duration (one per sec) | =([*; *-1].Duration / 1yr).Fraction | years |
+| Total galaxies               | 2_000_000_000_000                   |       |
+| Total planets                | =[*; *-3]*[*; *-1]                  |       |
+| Total count duration         | =[*; *-3]*[*; *-2]                  | years |
+
+sheet Caesium
+
+Meeting_Length : Duration[%H:%M:%S]
+Frequency      : Frequency[*Hz; .2f]
+Period         : Quantity
+
+| Item               | Meeting_Length       | Hyperfine_transition_emission_periods | Frequency                | Period      |
+| ------------------ | -------------------- | ------------------------------------- | ------------------------ | ----------- |
+| Caesium properties |                      |                                       | =([*-1; *+2]/[*-2; *+2]) | =1/[*-1; *] |
+|                    |                      |                                       |                          |             |
+| Plenary session    | 60min                | 66_186_948_744_000                    |                          |             |
+| Lunch break        | =[*+1; *]/[*+2; *-3] | 49_640_211_558_000                    |                          | =1/[*-1; *] |

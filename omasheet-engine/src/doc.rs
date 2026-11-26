@@ -489,7 +489,7 @@ fn const_format_of(value: &Value, text: &str) -> Option<Format> {
     let ty = match value {
         Value::Quantity(_) => S::Quantity(omasheet_omx::types::QId::ANY),
         Value::Scientific(..) => S::Scientific,
-        Value::Float(_) | Value::Decimal(_) => S::Float,
+        Value::Float(_) | Value::Decimal(_) | Value::Fraction(_) => S::Float,
         _ => return None,
     };
     Format::parse(text, ty).ok().filter(|f| f.takes(ty))
@@ -773,7 +773,15 @@ pub fn format_suggestions(ty: &str, unit: &str) -> Vec<(String, String)> {
     let Some(s) = S::from_name(ty) else {
         return Vec::new();
     };
-    let list: Vec<(String, &str)> = match s {
+    // `*` takes a metric unit without its prefix, `*g` for a column of `kg`.
+    let bare = siquant::Registry::builtin()
+        .prefixes()
+        .filter_map(|p| unit.strip_prefix(&*p.symbol));
+    let star = std::iter::once(unit)
+        .chain(bare)
+        .map(|u| format!("*{u}"))
+        .find(|f| Format::parse(f, s).is_ok_and(|parsed| parsed.takes(s)));
+    let mut list: Vec<(String, &str)> = match s {
         S::Int | S::Binary | S::Octal | S::Hex => vec![
             ("'d".into(), "grouped in threes"),
             ("x".into(), "hex"),
@@ -871,6 +879,12 @@ pub fn format_suggestions(ty: &str, unit: &str) -> Vec<(String, String)> {
         ],
         _ => Vec::new(),
     };
+    // Money takes no prefix; the other quantities have it after the plain unit.
+    if let (S::Quantity(_) | S::Duration, Some(star)) = (s, star)
+        && siquant::Registry::builtin().rate(unit).is_none()
+    {
+        list.insert(1, (star, "the prefix that suits each"));
+    }
     list.into_iter()
         .filter(|(f, _)| Format::parse(f, s).is_ok_and(|parsed| parsed.takes(s)))
         .map(|(f, what)| (f, what.to_string()))
@@ -8837,6 +8851,23 @@ mod tests {
             assert!(Format::parse(f, ty).is_ok(), "{f}");
         }
         assert!(mass.iter().any(|(f, _)| f == "g; v"), "{mass:?}");
+    }
+
+    #[test]
+    fn the_prefix_that_suits_is_offered_on_the_unit_without_its_own() {
+        for (ty, unit, star) in [
+            ("Length", "m", Some("*m")),
+            ("Mass", "kg", Some("*g")),
+            ("Data", "GiB", Some("*B")),
+            ("Duration", "s", Some("*s")),
+            ("Duration", "min", None),
+            ("Temperature", "°C", None),
+            ("Currency", "EUR", None),
+        ] {
+            let offered = format_suggestions(ty, unit);
+            let found = offered.iter().find(|(f, _)| f.starts_with('*'));
+            assert_eq!(found.map(|(f, _)| f.as_str()), star, "{ty}[{unit}]");
+        }
     }
 
     #[test]

@@ -2016,6 +2016,32 @@ fn custom_function_definitions_are_checked() {
 }
 
 #[test]
+fn a_duration_finer_than_a_microsecond_is_kept_in_seconds() {
+    let src = "sheet S\n\nA : Duration[*s]\n\n| A | B |\n| - | - |\n| 54ps | =(1.5ns).Duration |\n";
+    let doc = omasheet_engine::doc::Document::from_text(src);
+    let out = doc.snapshot();
+    assert!(out.problems.is_empty(), "{:?}", out.problems);
+    assert_eq!(out.sheets[0].rows[0][0].display, "54ps");
+    assert_eq!(out.sheets[0].rows[0][1].display, "0.0000000015");
+    // It cannot move a date.
+    let src = "sheet S\n\n| A |\n| - |\n| =2025-01-01T00:00 + 54ps |\n";
+    let doc = omasheet_engine::doc::Document::from_text(src);
+    let said = format!("{:?}", doc.snapshot().problems);
+    assert!(said.contains("finer than a microsecond"), "{said}");
+}
+
+#[test]
+fn cells_reading_rows_by_offset_are_not_circular() {
+    // `A` reads `B` two rows up, and `B` reads `A` a row down: no cell of
+    // either leads back to itself.
+    let src = "sheet S\n\n| A | B |\n| - | - |\n| 1 | =[A; *+1] |\n| 2 | |\n| =[B; *-2] | |\n";
+    let doc = omasheet_engine::doc::Document::from_text(src);
+    let out = doc.snapshot();
+    assert!(out.problems.is_empty(), "{:?}", out.problems);
+    assert_eq!(out.sheets[0].rows[2][0].display, "2");
+}
+
+#[test]
 fn a_column_range_counts_from_the_formulas_own_column() {
     let file = "sheet T\n\nN | A | B   | C | D | E | F\n\
                  x | 1 | 2   | 3 | 4 | = sum([*-4..*-1; *])     | = [*-5..^*-2; *].max()\n\
@@ -4386,8 +4412,8 @@ fn random_numbers_and_choices() {
 
 #[test]
 fn durations_multiply_and_take_powers_into_quantities_of_seconds() {
-    // Two durations multiplied, or one raised to the 2nd, 3rd or 4th power,
-    // are a quantity of seconds to that power.
+    // Two durations multiplied, or one raised to a whole power, are a
+    // quantity of seconds to that power.
     assert_eq!(calc("PT1M * PT1M"), "3600s^2");
     assert_eq!(calc("PT1M ** 2"), "3600s^2");
     assert_eq!(calc("PT1M ** 3"), "216000s^3");
@@ -4399,6 +4425,26 @@ fn durations_multiply_and_take_powers_into_quantities_of_seconds() {
     // A duration over a duration is a number, and over a square it is a quantity of time.
     assert_eq!(calc("PT1M / PT30S"), "2");
     assert_eq!(calc("(PT1M * PT1M) / PT1M"), "60s");
-    // Other powers of a duration are not a thing.
-    assert!(calc_err(None, "PT1M ** 5").contains("cannot apply `**`"));
+    assert_eq!(calc("PT2S ** 5"), "32s^5");
+    assert_eq!(calc("PT2S ** -1"), "0.5s^-1");
+}
+
+#[test]
+fn one_over_a_hertz_is_in_seconds() {
+    assert_eq!(calc("1 / 5Hz"), "0.2s");
+    assert_eq!(calc("1 / 5kHz"), "0.0002s");
+    assert_eq!(calc("(5Hz) ** -1"), "0.2s");
+    assert_eq!(calc("1 / 5Hz + 1s"), "1.2s");
+    // Beside another unit it is as the operands give it.
+    assert_eq!(calc("10m / 5Hz"), "2m.Hz^-1");
+}
+
+#[test]
+fn a_number_over_a_duration_is_a_rate() {
+    assert_eq!(calc("10 / PT2S"), "5s^-1");
+    assert_eq!(calc("2.5 / PT2S"), "1.25s^-1");
+    assert_eq!(calc("(10 / PT2S).to('Hz')"), "5Hz");
+    assert_eq!(calc("(10 / PT2S).type()"), "Frequency");
+    // What is known only from the value is named from it.
+    assert_eq!(calc("(10m / 2s).type()"), "Speed");
 }

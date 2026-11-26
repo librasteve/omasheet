@@ -19,6 +19,13 @@ pub enum NotDuration {
     Says(String),
 }
 
+/// Whether a length of time of `micros` microseconds has a part finer than
+/// one, beyond what floating point puts there: `54ps` and `1.5e-6s` do, and
+/// `0.1s` does not. Such a time is held as a quantity of seconds.
+pub fn finer_than_micro(micros: f64) -> bool {
+    (micros - micros.round()).abs() > micros.abs() * 8.0 * f64::EPSILON
+}
+
 /// The duration written as `text`, which starts with `P`.
 pub fn parse(text: &str) -> Result<i64, NotDuration> {
     let b = text.as_bytes();

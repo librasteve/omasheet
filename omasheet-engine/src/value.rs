@@ -546,20 +546,32 @@ pub fn arith(op: BinOp, a: &Value, b: &Value) -> Result<Value, String> {
         Some(Err(e)) => return Err(e.clone()),
         None => (a, b),
     };
-    // Two durations multiplied, or one raised to the second, third or fourth
-    // power, are a quantity of seconds squared, cubed or to the fourth: a
-    // synthetic type, as `5s * 5s` is. A root of it is a quantity of time.
+    // Two durations multiplied, or one raised to a whole power, are a
+    // quantity of seconds to that power: a synthetic type, as `5s * 5s` is.
+    // A root of it is a quantity of time. A number over a duration is a rate,
+    // so much per second, as `10 / 2s` is.
     let to_the_power = matches!(op, BinOp::Pow)
         && matches!(a, Value::Duration(_))
-        && matches!(b, Value::Int(2..=4, _));
+        && matches!(b, Value::Int(..));
     let product = op == BinOp::Mul && matches!((a, b), (Value::Duration(_), Value::Duration(_)));
-    if to_the_power || product {
+    let rate = op == BinOp::Div
+        && matches!(b, Value::Duration(_))
+        && matches!(
+            a,
+            Value::Int(..)
+                | Value::Decimal(_)
+                | Value::Fraction(_)
+                | Value::Percent(_)
+                | Value::Float(_)
+                | Value::Scientific(..)
+        );
+    if to_the_power || product || rate {
         let lift = |v: &Value| match v {
             Value::Duration(us) => crate::quantity::from_duration(*us),
             other => other.clone(),
         };
         return crate::quantity::arith(op, &lift(a), &lift(b))
-            .unwrap_or(Err("cannot multiply durations".to_string()));
+            .unwrap_or(Err("cannot multiply or divide durations".to_string()));
     }
     // A duration scaled by a number with an uncertainty is a quantity of
     // seconds, as the number is a quantity with no dimension.

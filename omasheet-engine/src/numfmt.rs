@@ -9,6 +9,7 @@
 //! a tie goes to the even digit, which is what C does with the value it has.
 
 use omasheet_omx::Dec;
+use omasheet_omx::rational::Rat;
 use omasheet_omx::date::Style;
 use omasheet_omx::numfmt::{Conv, NumFormat};
 
@@ -52,9 +53,14 @@ pub fn format_number(v: &Value, f: &NumFormat, style: &Style) -> Option<String> 
             let r = r.guarded();
             (r.is_negative(), Size::Exact(r.checked_abs()?))
         }
-        // A fraction as the nearest decimal of the default places, or the
-        // float where it needs more room than a decimal has.
-        Value::Fraction(r) => match r.to_dec(i32::from(omasheet_omx::types::DEFAULT_SCALE)) {
+        // A fraction as the widest decimal that holds it, where that is the
+        // fraction itself or has a double's digits; else, very large or very
+        // small, the float.
+        Value::Fraction(r) => match (0..=38)
+            .rev()
+            .find_map(|s| r.to_dec(s))
+            .filter(|d| d.precision() >= 17 || Rat::from_dec(*d) == **r)
+        {
             Some(d) => (d.is_negative(), Size::Exact(d.checked_abs()?)),
             None => (r.is_negative(), Size::Float(r.to_f64().abs())),
         },

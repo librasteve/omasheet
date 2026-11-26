@@ -467,6 +467,8 @@ struct Checker<'a> {
     col_state: Vec<Vec<St<S>>>,
     col_out: Vec<Vec<Option<ColKind>>>,
     col_deps: Vec<Vec<Vec<Dep>>>,
+    /// The columns, (sheet, column), with a cell that reads a later row.
+    cells_forward: Vec<(usize, usize)>,
     /// Per sheet and column, whether every column it reads it reads in the
     /// same row: [`Column::elementwise`]. Worked out in [`Checker::order`],
     /// which is where the dependencies are still to hand.
@@ -1215,6 +1217,7 @@ impl<'a> Checker<'a> {
             col_state: Vec::new(),
             col_out: Vec::new(),
             col_deps: Vec::new(),
+            cells_forward: Vec::new(),
             elementwise: Vec::new(),
             framewise: Vec::new(),
             duration_kinds: std::collections::HashMap::new(),
@@ -2645,7 +2648,9 @@ impl<'a> Checker<'a> {
                     let at = cell.span.start as usize + 1;
                     match parse_expr(&cell.text[1..], self.src, at) {
                         Ok(e) => {
+                            let mark = self.deps.len();
                             let (node, s) = self.lower_cell(&e, t, c);
+                            self.pin_rows(mark, t, c);
                             if declared.is_some() {
                                 self.fit_declared(s, declared, e.span, &name);
                             } else if s != S::Any || inferred.is_none() {
@@ -2810,6 +2815,23 @@ impl<'a> Checker<'a> {
             ),
             ty,
         )
+    }
+
+    /// A cell of column `c` of sheet `t` is one row, so its own row and any
+    /// offset from it, among the dependencies from `mark` on, are rows fixed
+    /// in place: `*-3` in one cell and `*+2` in another make no cycle of
+    /// their columns. A cell that does read itself is found when it is
+    /// calculated, but for `*` of its own column, which is plain here.
+    fn pin_rows(&mut self, mark: usize, t: usize, c: usize) {
+        for (to, kind) in &mut self.deps[mark..] {
+            match *kind {
+                DepKind::Fwd => self.cells_forward.push((t, c)),
+                DepKind::Back => {}
+                DepKind::Same if *to != DepNode::Col(t, c) => {}
+                _ => continue,
+            }
+            *kind = DepKind::Fixed;
+        }
     }
 
     /// Lower an expression that produces one cell of sheet `t`.
@@ -3277,8 +3299,8 @@ impl<'a> Checker<'a> {
     }
 
     /// A length of time of `v` in `unit`, with an uncertainty of `sigma`, as
-    /// a literal: whole microseconds, or with an uncertainty, which they
-    /// cannot hold, seconds.
+    /// a literal: whole microseconds, or where they cannot hold it, with an
+    /// uncertainty or a part finer than one, seconds.
     fn time_literal(
         &mut self,
         span: Span,
@@ -3286,7 +3308,7 @@ impl<'a> Checker<'a> {
         sigma: f64,
         unit: &siquant::Unit,
     ) -> Option<Lit> {
-        if sigma != 0.0 {
+        if sigma != 0.0 || crate::duration::finer_than_micro(v * unit.factor() * 1e6) {
             return siquant::Unit::parse("s", siquant::Scope::Any)
                 .ok()
                 .map(|sec| Lit::Quantity(v * unit.factor(), sigma * unit.factor(), sec));
@@ -4100,9 +4122,14 @@ impl<'a> Checker<'a> {
         // product or quotient measures.
         let quantity_and_span = matches!(op, BinOp::Mul | BinOp::Div)
             && ((a.is_quantity() && b == S::Duration) || (a == S::Duration && b.is_quantity()));
+        // A real number over a duration is a rate, a quantity per second.
+        let rate = op == BinOp::Div
+            && b == S::Duration
+            && a.is_numeric()
+            && !matches!(a, S::Any | S::Complex);
         // Two durations multiplied, or one raised to a power, are a quantity
-        // of seconds squared, cubed or to the fourth: worked out with the
-        // value, as a quantity's dimension is.
+        // of seconds to that power: worked out with the value, as a
+        // quantity's dimension is.
         let duration_power = (op == BinOp::Mul && a == S::Duration && b == S::Duration)
             || (op == BinOp::Pow && a == S::Duration && (b.is_int() || b == S::Any))
             // What is not known yet, beside a duration, is worked out with the value.
@@ -4110,6 +4137,8 @@ impl<'a> Checker<'a> {
                 && ((a == S::Any && b == S::Duration) || (a == S::Duration && b == S::Any)));
         let elem = if duration_power {
             S::Any
+        } else if rate {
+            S::Quantity(QId::from_name("Frequency").unwrap_or(QId::ANY))
         } else if op.is_arithmetic() && (timed(a) || timed(b)) && !quantity_and_span {
             // A duration is scaled by a number: `PT1H * 3`, `P1D / 2`.
             let scaled = |d: S, n: S| d == S::Duration && n.is_numeric();
@@ -4128,7 +4157,7 @@ impl<'a> Checker<'a> {
                     format!("cannot apply `{sym}` to {a} and {b}"),
                     "add or subtract a Duration, whole days with a Date, or whole seconds with a \
                      Time or Datetime; subtract two of the same kind; add a Date and a Time; \
-                     multiply or divide a Duration by a number",
+                     multiply or divide a Duration by a number, or divide a number by one",
                 );
                 return fail;
             };
@@ -6001,7 +6030,9 @@ impl<'a> Checker<'a> {
                 let (arg, aty) = self.lower(&args[0], sc);
                 let named = |s: S| match s {
                     // A quantity not declared as a kind has only its
-                    // dimension, which is read from the value.
+                    // dimension, which is read from the value, as is what
+                    // is not known until then.
+                    S::Any => None,
                     S::Quantity(q) if q.named().is_none() => None,
                     s => Some(s.to_string()),
                 };
@@ -6851,7 +6882,14 @@ impl<'a> Checker<'a> {
                             DepNode::Const(_) => None,
                         })
                         .collect(),
-                    reverse: scc.reverse,
+                    // Cells that read later rows are calculated last row
+                    // first, so that a long chain of them is not followed
+                    // from one end.
+                    reverse: scc.reverse
+                        || scc.nodes.iter().any(|&n| match nodes[n] {
+                            DepNode::Col(t, c) => self.cells_forward.contains(&(t, c)),
+                            DepNode::Const(_) => false,
+                        }),
                 }),
             }
         }

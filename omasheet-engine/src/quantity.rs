@@ -90,10 +90,11 @@ pub fn to_lit(q: &Quantity) -> Lit {
 }
 
 /// A quantity of time held in a `Duration` column: a whole number of
-/// microseconds, or with an uncertainty, which that cannot hold, a quantity
-/// of seconds. An error says what else it measures.
+/// microseconds, or where that cannot hold it, with an uncertainty or a part
+/// finer than one, a quantity of seconds. An error says what else it
+/// measures.
 pub fn into_duration(q: &Quantity) -> Result<Value, String> {
-    if q.sigma() == 0.0 {
+    if q.sigma() == 0.0 && !finer(q) {
         return as_duration(q);
     }
     let seconds = Unit::parse("s", Scope::Live).map_err(said)?;
@@ -104,6 +105,12 @@ pub fn into_duration(q: &Quantity) -> Result<Value, String> {
     Quantity::new(v * f, s * f, seconds)
         .map(|q| Value::Quantity(Rc::new(q)))
         .map_err(said)
+}
+
+/// Whether a quantity of time has a part finer than a microsecond.
+fn finer(q: &Quantity) -> bool {
+    q.unit().dims() == siquant::Dim::of(siquant::Base::Time)
+        && omasheet_omx::duration::finer_than_micro(q.value() * q.unit().factor() * 1e6)
 }
 
 /// A `Duration` of `us` microseconds as a column of the format `f` shows it:
@@ -164,16 +171,24 @@ pub fn as_span(op: BinOp, a: &Value, b: &Value) -> Option<Result<(Value, Value),
         Value::Quantity(q) => as_duration(q),
         other => Ok(other.clone()),
     };
-    // A duration with an uncertainty is a quantity of seconds, which can
-    // be added to another, but cannot move a date or a time.
+    // A duration with an uncertainty, or a part finer than a microsecond, is
+    // a quantity of seconds, which can be added to another, but cannot move
+    // a date or a time.
+    let fine = |v: &Value| matches!(v, Value::Quantity(q) if finer(q));
     let uncertain = |v: &Value| matches!(v, Value::Quantity(q) if q.sigma() != 0.0);
     match (a, b) {
-        (q, t) | (t, q) if uncertain(q) && matches!(t, Value::Duration(_) | Value::Quantity(_)) => {
+        (q, t) | (t, q)
+            if (uncertain(q) || fine(q))
+                && matches!(t, Value::Duration(_) | Value::Quantity(_)) =>
+        {
             None
         }
         (q, _) | (_, q) if uncertain(q) => Some(Err(
             "a duration with an uncertainty cannot move a date or a time, which are exact"
                 .to_string(),
+        )),
+        (q, t) | (t, q) if fine(q) && timed(t) => Some(Err(
+            "a duration finer than a microsecond cannot move a date or a time".to_string(),
         )),
         (Value::Quantity(_), t) | (t, Value::Quantity(_)) if timed(t) => {
             Some(side(a).and_then(|x| side(b).map(|y| (x, y))))
@@ -255,7 +270,23 @@ fn arith_of(op: BinOp, a: &Value, b: &Value) -> Result<Value, String> {
             ));
         }
     };
+    let out = out.and_then(|q| match seconds_for(q.unit()) {
+        Some(s) => q.convert(&s),
+        None => Ok(q),
+    });
     out.map(value).map_err(|e| explain(verb, &x, &y, e))
+}
+
+/// The second, where `unit` is one over a hertz alone, `Hz^-1` or `kHz^-1`:
+/// what such a product or quotient is shown in, as it is a time. Any other
+/// unit is the one the operands give.
+pub(crate) fn seconds_for(unit: &Unit) -> Option<Unit> {
+    let [term] = unit.terms() else { return None };
+    let hertz = Unit::parse("Hz", Scope::Live).ok()?;
+    if term.exp != -1 || term.unit != hertz.terms().first()?.unit {
+        return None;
+    }
+    Unit::parse("s", Scope::Live).ok()
 }
 
 /// `a ± b` where `a` is a quantity: the uncertainty is a quantity of the same

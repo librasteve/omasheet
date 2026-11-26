@@ -1060,6 +1060,14 @@ fn quantity(op: BinOp, l: Out, r: Out, cx: &Cx) -> Option<Out> {
     if unit.is_dimensionless() {
         return None;
     }
+    // One over a hertz is in seconds, as the engine has it.
+    let (value, sigma, unit) = match crate::quantity::seconds_for(&unit) {
+        Some(s) => {
+            let ratio = unit.spread_ratio(&s).ok()?;
+            (convert(value, &unit, &s), sigma * lit(ratio), s)
+        }
+        None => (value, sigma, unit),
+    };
     Some(Out {
         expr: as_struct(vec![
             value.alias("value"),

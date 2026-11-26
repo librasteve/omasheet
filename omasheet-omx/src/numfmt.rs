@@ -218,13 +218,13 @@ impl NumFormat {
     }
 
     /// Whether a column of type `ty` takes this format: an `Integer` takes a
-    /// conversion of a whole number, and a `Decimal` or a `Float` one of a
-    /// number with places.
+    /// conversion of a whole number, and a `Decimal`, a `Fraction` or a
+    /// `Float` one of a number with places.
     pub fn takes(&self, ty: S) -> bool {
         match ty {
             s if s.is_int() => self.conv.is_integer(),
             S::Percent => !self.conv.is_integer() && self.scale.is_none(),
-            S::Decimal(_) | S::Float => !self.conv.is_integer(),
+            S::Decimal(_) | S::Fraction | S::Float => !self.conv.is_integer(),
             _ => false,
         }
     }
@@ -234,7 +234,7 @@ impl NumFormat {
     pub fn conversions_of(ty: S) -> Option<&'static str> {
         match ty {
             s if s.is_int() => Some("`d`, `i`, `x`, `X`, `o`, `b` or `B`"),
-            S::Decimal(_) | S::Float | S::Percent => Some("`f`, `F`, `e`, `E`, `g` or `G`"),
+            S::Decimal(_) | S::Fraction | S::Float | S::Percent => Some("`f`, `F`, `e`, `E`, `g` or `G`"),
             _ => None,
         }
     }

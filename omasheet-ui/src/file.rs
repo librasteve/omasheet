@@ -575,12 +575,6 @@ pub mod qobject {
         /// Keep a zoomed text size for the next launch; 0 forgets it.
         #[qinvokable]
         fn save_font_size(self: &File, size: i32);
-        /// Whether the plot pane was shown last time.
-        #[qinvokable]
-        fn saved_plot_pane(self: &File) -> bool;
-        /// Keep whether the plot pane is shown, for the next launch.
-        #[qinvokable]
-        fn save_plot_pane(self: &File, shown: bool);
         /// Whether the plot settings pane is shown: unless it was put away.
         #[qinvokable]
         fn saved_plot_settings(self: &File) -> bool;
@@ -1987,14 +1981,6 @@ impl qobject::File {
 
     fn save_font_size(&self, size: i32) {
         crate::theme::save_font_size(size.max(0) as u32);
-    }
-
-    fn saved_plot_pane(&self) -> bool {
-        crate::theme::read_config("plot-pane").trim() == "1"
-    }
-
-    fn save_plot_pane(&self, shown: bool) {
-        crate::theme::write_config("plot-pane", if shown { "1" } else { "" });
     }
 
     fn saved_plot_settings(&self) -> bool {

@@ -357,6 +357,20 @@ ApplicationWindow {
     function manyLines() {
         return formulaField.source.indexOf("\n") >= 0;
     }
+    // A window tiled to a quarter or a half of the screen: too narrow for
+    // the whole style bar.
+    readonly property bool compactBar: width <= root.Screen.width / 2
+    onCompactBarChanged: styleMore.close()
+    // A column's name has no spaces: one typed or pasted into `field`
+    // becomes `_`, the caret staying where it is.
+    function underscoreSpaces(field) {
+        var name = field.text.replace(/\s/g, "_");
+        if (name === field.text)
+            return;
+        var at = field.cursorPosition;
+        field.text = name;
+        field.cursorPosition = at;
+    }
     // The source takes the place of the grid while it is shown.
     property bool showSource: false
     onShowSourceChanged: Qt.callLater(function() {
@@ -366,12 +380,9 @@ ApplicationWindow {
     // The plot pane sits beside the grid and draws the file's plots, one at
     // a time. The SVG is made in Rust at the pane's size, in the theme's
     // ink; it is drawn again, after a pause, when the file, the size or the
-    // theme changes.
-    property bool showPlot: file.savedPlotPane()
-    onShowPlotChanged: {
-        file.savePlotPane(showPlot);
-        plotTimer.restart();
-    }
+    // theme changes. It is closed on every open, until it is asked for.
+    property bool showPlot: false
+    onShowPlotChanged: plotTimer.restart()
     // The share of the window the plot pane takes: half until the divider
     // is dragged, and kept as the window is resized.
     property real plotShare: 0.5
@@ -651,26 +662,36 @@ ApplicationWindow {
     }
 
     // The boxes that set a column, filter, type, unit and format, are all this
-    // wide, the widest of them, and open the same way beside the column: at
-    // the head's top, on its right edge, and over it by a pixel or two only,
-    // so the column is not hidden. Where there is no room on the right, on its
-    // left, over the same pixels.
+    // wide, the widest of them, and open the same way beside the columns: at
+    // the head's top, on the right edge of the last column selected, and over
+    // it by a pixel or two only, so that no column of the selection is hidden.
+    // Where there is no room on the right, on the left of the first, over the
+    // same pixels. They stay there as a column changes width, as it may on
+    // Apply, until dragged away.
     readonly property int setPopupWidth: Math.min(Math.round(fontSize * 30), width - 16)
     function placeBeside(box, item) {
         var lap = 2;
-        var right = item.mapToItem(null, item.width - lap, 0).x;
-        box.x = right + box.width <= win.width - 8 ? item.width - lap
-            : Math.max(-item.mapToItem(null, 0, 0).x + 8, lap - box.width);
-        box.y = 0;
-        // Another Set panel already open: this one is cascaded below and to
-        // the right of it, so that every title bar stays in view.
+        var last = item.index === selLeft && selRight > selLeft
+            ? headCells.itemAt(selRight) || item : item;
+        // The edge of the last column, from the first.
+        function edge() {
+            // Read so that the place follows the widths.
+            var widths = win.colWidths, own = item.width;
+            return last.mapToItem(item, last.width - lap, 0).x;
+        }
+        var onRight = item.mapToItem(null, edge(), 0).x + box.width <= win.width - 8;
+        box.x = Qt.binding(function() {
+            return onRight ? edge()
+                : Math.max(-item.mapToItem(null, 0, 0).x + 8, lap - box.width);
+        });
+        // Another Set panel already open: this one is cascaded below it, so
+        // that every title bar stays in view, and no further across.
         var others = 0;
         for (var i = 0; i < metaPanels.length; i++) {
             var other = metaPanel(metaPanels[i]);
             if (other !== box && other.visible)
                 others++;
         }
-        box.x += others * 28;
         box.y = others * 36;
         box.z = ++metaZ;
     }
@@ -700,7 +721,7 @@ ApplicationWindow {
             showPlot = true;
             Qt.callLater(function() { plotNav.forceActiveFocus(); });
         } else if (!showPlotSettings && !plotNav.activeFocus) {
-            // The plots are already open, as they are on opening a file: the
+            // The plots are already open, as after the footer's button: the
             // first press takes the focus to their tabs.
             plotNav.forceActiveFocus();
         } else if (!showPlotSettings) {
@@ -4322,15 +4343,6 @@ ApplicationWindow {
         reload();
         if (file.filePath.length > 0)
             file.keepLastFile(file.filePath);
-        // A file whose first sheet has plots opens with them shown, and the
-        // settings away.
-        try {
-            var firsts = snap.sheets.length > 0 ? snap.sheets[0].name : "";
-            if (firsts.length > 0 && JSON.parse(file.plotParentsJson()).indexOf(firsts) >= 0) {
-                showPlotSettings = false;
-                showPlot = true;
-            }
-        } catch (e) {}
         grid.forceActiveFocus();
     }
 
@@ -4690,7 +4702,9 @@ ApplicationWindow {
 
                 // The style of the selection: bold, italic, heading level,
                 // alignment. Whole columns and rows take all of them, a block
-                // of cells takes an alignment, which is its columns'.
+                // of cells takes an alignment, which is its columns'. In a
+                // window of half the screen's width or less, all but undo and
+                // redo go in a box under a button of their own.
                 Row {
                     id: styleRow
                     visible: win.canStyle
@@ -4703,16 +4717,25 @@ ApplicationWindow {
                     property int last: 0
                     function usable() {
                         var out = [];
-                        for (var i = 0; i < children.length; i++)
-                            if (children[i].visible && children[i].usable === true)
-                                out.push(children[i]);
+                        function add(items) {
+                            for (var i = 0; i < items.length; i++)
+                                if (items[i] === styleRest)
+                                    add(styleRest.children);
+                                else if (items[i].visible && items[i].usable === true)
+                                    out.push(items[i]);
+                        }
+                        add(children);
+                        // In the box, they come after its button.
+                        if (win.compactBar && styleMore.visible)
+                            add(styleRest.children);
                         return out;
                     }
                     function ring(index) {
                         var all = usable();
-                        for (var i = 0; i < children.length; i++)
-                            if (children[i].usable !== undefined)
-                                children[i].focused = false;
+                        var every = Array.from(children).concat(Array.from(styleRest.children));
+                        for (var i = 0; i < every.length; i++)
+                            if (every[i].usable !== undefined)
+                                every[i].focused = false;
                         at = index;
                         if (index >= 0 && index < all.length) {
                             all[index].focused = true;
@@ -4729,9 +4752,11 @@ ApplicationWindow {
                     }
                     function leave() {
                         ring(-1);
+                        styleMore.close();
                         grid.forceActiveFocus();
                     }
                     onActiveFocusChanged: if (!activeFocus) ring(-1)
+                    onVisibleChanged: if (!visible) styleMore.close()
                     Keys.onPressed: function(event) {
                         var all = usable();
                         if (all.length === 0 || at < 0) {
@@ -4760,51 +4785,88 @@ ApplicationWindow {
                     StyleButton { label: "\u21B6"; enabled: file.canUndo; onPressed: file.undo() }
                     StyleButton { label: "\u21B7"; enabled: file.canRedo; onPressed: file.redo() }
                     Item { width: Math.round(win.fontSize * 0.6); height: 1 }
-                    StyleButton { label: "B"; bold: true; marking: true; active: (win.selStyle & 1) !== 0; onPressed: win.setStyle("bold", 0) }
-                    StyleButton { label: "I"; italic: true; marking: true; active: (win.selStyle & 2) !== 0; onPressed: win.setStyle("italic", 0) }
                     StyleButton {
-                        id: levelButton
-                        label: (((win.selStyle >> 2) & 7) > 0 ? "H" + ((win.selStyle >> 2) & 7) : "H") + " \u25BE"
+                        id: styleMoreButton
+                        visible: win.compactBar
+                        label: "\u22EF \u25BE"
                         wide: true
-                        marking: true
-                        active: ((win.selStyle >> 2) & 7) > 0
-                        onPressed: levelMenu.popup(levelButton, 0, levelButton.height)
+                        active: styleMore.visible
+                        onPressed: {
+                            if (styleMore.visible) {
+                                styleMore.close();
+                            } else {
+                                styleMore.open();
+                                // From the keyboard, on to the first in the box.
+                                if (styleRow.at >= 0)
+                                    styleRow.ring(styleRow.at + 1);
+                            }
+                        }
+                        Popup {
+                            id: styleMore
+                            x: styleMoreButton.width - width
+                            y: styleMoreButton.height + 4
+                            padding: 6
+                            // The keyboard stays with the bar, which steps
+                            // through what is in here.
+                            focus: false
+                            closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutsideParent
+                            contentItem: Item {
+                                id: styleHolder
+                                implicitWidth: styleRest.implicitWidth
+                                implicitHeight: styleRest.implicitHeight
+                            }
+                        }
                     }
-                    StyleButton { label: "\u03A3"; marking: true; active: (win.selStyle & 32) !== 0; onPressed: win.setStyle("summary", 0) }
-                    StyleButton {
-                        id: alignButton
-                        label: (win.selAlign === "l" ? "\u2190" : win.selAlign === "c" ? "\u2194"
-                            : win.selAlign === "r" ? "\u2192" : "\u2261") + " \u25BE"
-                        wide: true
-                        active: win.selAlign !== ""
-                        onPressed: alignMenu.popup(alignButton, 0, alignButton.height)
+                    Row {
+                        id: styleRest
+                        parent: win.compactBar ? styleHolder : styleRow
+                        spacing: 2
+                        StyleButton { label: "B"; bold: true; marking: true; active: (win.selStyle & 1) !== 0; onPressed: win.setStyle("bold", 0) }
+                        StyleButton { label: "I"; italic: true; marking: true; active: (win.selStyle & 2) !== 0; onPressed: win.setStyle("italic", 0) }
+                        StyleButton {
+                            id: levelButton
+                            label: (((win.selStyle >> 2) & 7) > 0 ? "H" + ((win.selStyle >> 2) & 7) : "H") + " \u25BE"
+                            wide: true
+                            marking: true
+                            active: ((win.selStyle >> 2) & 7) > 0
+                            onPressed: levelMenu.popup(levelButton, 0, levelButton.height)
+                        }
+                        StyleButton { label: "\u03A3"; marking: true; active: (win.selStyle & 32) !== 0; onPressed: win.setStyle("summary", 0) }
+                        StyleButton {
+                            id: alignButton
+                            label: (win.selAlign === "l" ? "\u2190" : win.selAlign === "c" ? "\u2194"
+                                : win.selAlign === "r" ? "\u2192" : "\u2261") + " \u25BE"
+                            wide: true
+                            active: win.selAlign !== ""
+                            onPressed: alignMenu.popup(alignButton, 0, alignButton.height)
+                        }
+                        StyleButton {
+                            id: widthButton
+                            label: "\u21D4 \u25BE"
+                            wide: true
+                            active: win.selWidth > 0
+                            onPressed: widthMenu.popup(widthButton, 0, widthButton.height)
+                        }
+                        Item { width: Math.round(win.fontSize * 0.6); height: 1 }
+                        StyleButton {
+                            id: flowButton
+                            label: (win.selFlow === "clip" ? "\u21E5" : win.selFlow === "wrap" ? "\u21B5" : "\u21E2") + " \u25BE"
+                            wide: true
+                            enabled: win.selTextCols
+                            active: win.selFlow !== ""
+                            onPressed: flowMenu.popup(flowButton, 0, flowButton.height)
+                        }
+                        Item { width: Math.round(win.fontSize * 0.6); height: 1 }
+                        StyleButton { label: "\u2744"; active: win.frozen; onPressed: win.toggleFreeze() }
+                        StyleButton {
+                            id: viewButton
+                            label: "\u2298 \u25BE"
+                            wide: true
+                            active: win.hiddenByReader > 0
+                            onPressed: viewMenu.popup(viewButton, 0, viewButton.height)
+                        }
+                        StyleButton { label: "\u2715"; onPressed: clearStylesDialog.open() }
                     }
-                    StyleButton {
-                        id: widthButton
-                        label: "\u21D4 \u25BE"
-                        wide: true
-                        active: win.selWidth > 0
-                        onPressed: widthMenu.popup(widthButton, 0, widthButton.height)
-                    }
-                    Item { width: Math.round(win.fontSize * 0.6); height: 1 }
-                    StyleButton {
-                        id: flowButton
-                        label: (win.selFlow === "clip" ? "\u21E5" : win.selFlow === "wrap" ? "\u21B5" : "\u21E2") + " \u25BE"
-                        wide: true
-                        enabled: win.selTextCols
-                        active: win.selFlow !== ""
-                        onPressed: flowMenu.popup(flowButton, 0, flowButton.height)
-                    }
-                    Item { width: Math.round(win.fontSize * 0.6); height: 1 }
-                    StyleButton { label: "\u2744"; active: win.frozen; onPressed: win.toggleFreeze() }
-                    StyleButton {
-                        id: viewButton
-                        label: "\u2298 \u25BE"
-                        wide: true
-                        active: win.hiddenByReader > 0
-                        onPressed: viewMenu.popup(viewButton, 0, viewButton.height)
-                    }
-                    StyleButton { label: "\u2715"; onPressed: clearStylesDialog.open() }
                     Menu {
                         topPadding: 2
                         bottomPadding: 2
@@ -4943,6 +5005,10 @@ ApplicationWindow {
                     break;
                 case Qt.Key_Backspace: win.clearSelection(); break;
                 case Qt.Key_Escape:
+                    if (styleMore.visible) {
+                        styleMore.close();
+                        break;
+                    }
                     // Rows, columns or the sheet copied or cut: Esc lets go of
                     // them, and leaves them selected for another Esc.
                     if (win.outline !== null && ((win.outline.columns && win.selKind === "column")
@@ -5442,6 +5508,7 @@ ApplicationWindow {
                                             headCell.renaming = false;
                                             grid.forceActiveFocus();
                                         }
+                                        onTextEdited: win.underscoreSpaces(this)
                                         onAccepted: finish(true)
                                         Keys.onEscapePressed: finish(false)
                                         onActiveFocusChanged: if (!activeFocus) finish(true)
@@ -11701,6 +11768,8 @@ ApplicationWindow {
                 font.family: win.font.family
                 font.features: win.font.features
                 font.pixelSize: win.dialogSize
+                onTextEdited: if (["column", "computed", "rename", "setFormula"].indexOf(promptDialog.kind) >= 0)
+                    win.underscoreSpaces(nameField)
                 onAccepted: promptDialog.needsExpr ? exprField.forceActiveFocus() : promptDialog.tryAccept()
             }
             // A plot is of a kind.
