@@ -21,7 +21,8 @@ pub enum Format {
     /// How a column of text that is wider than its column is shown.
     Text(TextFlow),
     /// How a `Duration` column shows its values other than as a number of a
-    /// unit, which is a [`Format::Quantity`]: `iso` or `%H:%M:%S`.
+    /// unit, which is a [`Format::Quantity`]: `iso`, or hours, minutes and
+    /// seconds, as `%H:%M:%S` or `%M:%S`.
     Duration(DurationStyle),
 }
 
@@ -55,13 +56,17 @@ impl fmt::Display for TextFlow {
 }
 
 /// A `Duration` shown as a whole, rather than as a number in a unit.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum DurationStyle {
     /// An ISO 8601 duration, `PT1H30M`.
     Iso,
     /// Signed hours, minutes and seconds, `+01:30:00`; the hours are not
     /// capped at 24.
     Clock,
+    /// Any other choice of `%H`, `%M` and `%S`, with the text between them:
+    /// `%H:%M`, `%Mm %Ss`. Signed as the clock is; see
+    /// [`crate::duration::format_pattern`].
+    Pattern(String),
     /// A count of seconds with its unit, `30s`. Only ever inferred.
     Seconds,
     /// Left to the cells: a column that declares no format shows a duration
@@ -83,9 +88,9 @@ impl DurationStyle {
     /// favoured of the forms the column's literals are written in. Seconds
     /// beside ISO are shown as seconds only while under a minute, where a
     /// count of seconds still reads; past that, as the clock.
-    pub fn resolve(self, micros: i64) -> DurationStyle {
-        let DurationStyle::Auto(kinds) = self else {
-            return self;
+    pub fn resolve(&self, micros: i64) -> DurationStyle {
+        let &DurationStyle::Auto(kinds) = self else {
+            return self.clone();
         };
         if kinds & KIND_CLOCK != 0 {
             DurationStyle::Clock
@@ -104,6 +109,7 @@ impl DurationStyle {
         match text.trim() {
             "iso" => Some(DurationStyle::Iso),
             "%H:%M:%S" => Some(DurationStyle::Clock),
+            t if crate::duration::is_pattern(t) => Some(DurationStyle::Pattern(t.to_string())),
             _ => None,
         }
     }
@@ -114,6 +120,7 @@ impl fmt::Display for DurationStyle {
         f.write_str(match self {
             DurationStyle::Iso => "iso",
             DurationStyle::Clock => "%H:%M:%S",
+            DurationStyle::Pattern(p) => p,
             DurationStyle::Seconds => "s",
             DurationStyle::Auto(_) => "auto",
         })
@@ -668,6 +675,11 @@ impl Format {
             S::Quantity(id) => QuantityFormat::parse(text, id).map(Format::Quantity),
             S::Duration => match DurationStyle::parse(text) {
                 Some(style) => Ok(Format::Duration(style)),
+                None if text.contains('%') => Err(FormatError {
+                    at: 0,
+                    len: text.chars().count(),
+                    message: "a `Duration` takes `%H`, `%M` and `%S`, each once".to_string(),
+                }),
                 None => match QId::from_name("Duration") {
                     Some(id) => QuantityFormat::parse(text, id).map(Format::Quantity),
                     None => Err(FormatError {
@@ -738,7 +750,7 @@ impl Format {
                 "a unit of its dimension, as `g`, then `;` and a number format, or `;` and a number format alone",
             ),
             S::Duration => Some(
-                "a unit of time, as `h`, then `;` and a number format; or `iso`, or `%H:%M:%S`",
+                "a unit of time, as `h`, then `;` and a number format; or `iso`; or any of `%H`, `%M` and `%S`, as `%H:%M`",
             ),
             S::Date => Some("the conversions of a date, as `%d %b %Y`"),
             S::Boolean => Some("two different characters, as `10`, `xo` or `✓✗`"),
@@ -759,7 +771,7 @@ impl Format {
                 "a quantity format is a unit, as `g`, which may be followed by `;` and a number format, as `g; ±.3e-3`"
             }
             S::Duration => {
-                "a `Duration` format is a unit of time, as `h`, which may be followed by `;` and a number format, or `iso`, or `%H:%M:%S`"
+                "a `Duration` format is a unit of time, as `h`, which may be followed by `;` and a number format, or `iso`, or any of `%H`, `%M` and `%S`, as `%H:%M:%S`"
             }
             S::Boolean => {
                 "a `Boolean` format is two different characters: the symbol for true, then for false, as `xo` or `✓✗`"

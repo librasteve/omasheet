@@ -14,7 +14,7 @@ sheet Caesium
 
 Meeting_Length : Duration[%H:%M:%S]
 Frequency      : Frequency[*Hz; .2f]
-Period         : Quantity
+Period         : Duration[*s]
 
 | Item               | Meeting_Length       | Hyperfine_transition_emission_periods | Frequency                | Period      |
 | ------------------ | -------------------- | ------------------------------------- | ------------------------ | ----------- |

@@ -189,6 +189,68 @@ pub fn format_clock(micros: i64) -> String {
     out
 }
 
+/// The conversions of `pattern`, `H`, `M` and `S`, where it is a duration
+/// format: at least one of them, each at most once, and no other.
+fn conversions(pattern: &str) -> Option<Vec<char>> {
+    let mut found = Vec::new();
+    let mut chars = pattern.chars();
+    while let Some(c) = chars.next() {
+        if c != '%' {
+            continue;
+        }
+        match chars.next()? {
+            '%' => {}
+            c @ ('H' | 'M' | 'S') if !found.contains(&c) => found.push(c),
+            _ => return None,
+        }
+    }
+    (!found.is_empty()).then_some(found)
+}
+
+/// Whether `pattern` is a duration format of `%H`, `%M` and `%S`.
+pub fn is_pattern(pattern: &str) -> bool {
+    conversions(pattern).is_some()
+}
+
+/// `micros` by a pattern of `%H`, `%M` and `%S`, with its sign before it.
+/// Each is what is left after the larger ones the pattern has, so the
+/// largest is not capped: 90 minutes by `%M:%S` is `+90:00`. What is finer
+/// than the smallest is cut off, and a fraction of a second follows `%S`.
+pub fn format_pattern(micros: i64, pattern: &str) -> String {
+    let found = conversions(pattern).unwrap_or_default();
+    let n = micros.unsigned_abs();
+    let second = MICROS as u64;
+    let mut rest = n / second;
+    let mut values = [0; 3];
+    for (k, (c, size)) in [('H', 3_600), ('M', 60), ('S', 1)].into_iter().enumerate() {
+        if found.contains(&c) {
+            values[k] = rest / size;
+            rest %= size;
+        }
+    }
+    let mut out = String::from(if micros < 0 { "-" } else { "+" });
+    let mut chars = pattern.chars();
+    while let Some(c) = chars.next() {
+        if c != '%' {
+            out.push(c);
+            continue;
+        }
+        match chars.next() {
+            Some('H') => out += &format!("{:02}", values[0]),
+            Some('M') => out += &format!("{:02}", values[1]),
+            Some('S') => {
+                out += &format!("{:02}", values[2]);
+                let frac = n % second;
+                if frac > 0 {
+                    out += &format!(".{}", format!("{frac:06}").trim_end_matches('0'));
+                }
+            }
+            other => out.extend(other),
+        }
+    }
+    out
+}
+
 /// `micros` as a count of seconds with its unit: `30s`, `-1.5s`.
 pub fn format_seconds(micros: i64) -> String {
     let n = micros.unsigned_abs();
@@ -317,6 +379,27 @@ mod tests {
         assert_eq!(format_clock(-(30 * MICROS + MICROS / 2)), "-00:00:30.5");
         for t in [0, 5400 * MICROS, -HOUR, 1] {
             assert_eq!(parse_clock(&format_clock(t)), Ok(t));
+        }
+    }
+
+    #[test]
+    fn any_of_hours_minutes_and_seconds_is_a_pattern() {
+        let t = 25 * HOUR + 30 * 60 * MICROS + 5 * MICROS + MICROS / 2;
+        for (pattern, shown) in [
+            ("%H", "+25"),
+            ("%M", "+1530"),
+            ("%S", "+91805.5"),
+            ("%H:%M", "+25:30"),
+            ("%M:%S", "+1530:05.5"),
+            ("%H%M%S", "+253005.5"),
+            ("%H:%S", "+25:1805.5"),
+            ("%Hh %Mm", "+25h 30m"),
+        ] {
+            assert_eq!(format_pattern(t, pattern), shown, "{pattern}");
+        }
+        assert_eq!(format_pattern(-90 * 60 * MICROS, "%M"), "-90");
+        for bad in ["", "H", "%d", "%H:%H", "%H %", "%%"] {
+            assert!(!is_pattern(bad), "{bad}");
         }
     }
 

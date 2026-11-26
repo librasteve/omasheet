@@ -34,7 +34,7 @@ Notes for the release after 0.1.12, kept here until it is cut. The items marked 
 
 - **Literals:** ISO 8601 (`PT1H30M`, no calendar years or months), a quantity of time (`139s`, `90min`, `1.5d`) and a signed colon form, `+11:30` or `-0:00:30.5` (the sign is what makes it a duration; an unsigned `11:30` is still a time of day). After an operand a sign is an operator, so `09:00 + +01:30` is `10:30`.
 - **Arithmetic:** two dates or times subtract to a `Duration`; `Duration / Duration` is a number; a `Duration` compares with a quantity of time (`Took > 1h`).
-- **Display:** `Duration[iso]`, `Duration[%H:%M:%S]` (`+34:05:30`, hours past 24), or any unit with a number format, and `v` puts the unit in each row. A value in a Markdown sentence uses its column's format (`139s`).
+- **Display:** `Duration[iso]`, `Duration[%H:%M:%S]` (`+34:05:30`, hours past 24) or any of `%H`, `%M` and `%S` (`%M:%S`), or any unit with a number format, and `v` puts the unit in each row. A value in a Markdown sentence uses its column's format (`139s`).
 - **Interchange:** a `Duration` is a native Parquet duration, and one with an uncertainty is a `value` and `sigma` struct; a bare number in a `Duration` column is read in its unit.
 - **Units:** `min`, `h`, `d`, `wk` and `yr` (the Julian year).
 

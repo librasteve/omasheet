@@ -5524,6 +5524,7 @@ impl<'p> Engine<'p> {
             Some(Format::Duration(d)) => match v {
                 Value::Duration(us) => Some(match d.resolve(*us) {
                     DurationStyle::Clock => duration::format_clock(*us),
+                    DurationStyle::Pattern(p) => duration::format_pattern(*us, &p),
                     DurationStyle::Seconds => duration::format_seconds(*us),
                     _ => duration::format(*us),
                 }),

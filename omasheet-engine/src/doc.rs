@@ -16,7 +16,7 @@ use crate::eval::Engine;
 use crate::table::Copying;
 use crate::value::{Value, arith, delocalised, format_exact, format_styled};
 use omasheet_omx::ast::{BinOp, Expr, ExprKind, Lit, UnOp};
-use omasheet_omx::colfmt::{Format, closing};
+use omasheet_omx::colfmt::{DurationStyle, Format, closing};
 use omasheet_omx::date::{self, Style};
 use omasheet_omx::file::{
     FileAst, PLOT_KEYS, PLOT_KINDS, PlotDecl, SchemaLine, SheetDecl, ident_len, parse_file,
@@ -562,7 +562,14 @@ fn cell_snap(
         Some(_) => engine.show_in(&value, false, format),
         None => shown_text(engine, &value),
     };
-    let full = exact_text(&value, false, &display, style);
+    let full = match (&value, format) {
+        // A pattern may leave part out, and `%M:%S` reads back as hours, so
+        // what is copied is the whole clock.
+        (Value::Duration(us), Some(Format::Duration(DurationStyle::Pattern(_)))) => {
+            Some(omasheet_omx::duration::format_clock(*us))
+        }
+        _ => exact_text(&value, false, &display, style),
+    };
     let unit = unit_shown(&value, format, &display);
     CellSnap {
         unit,
@@ -846,6 +853,8 @@ pub fn format_suggestions(ty: &str, unit: &str) -> Vec<(String, String)> {
             ("d; .1f".into(), "days, 1 place"),
             ("h; v.1f".into(), "the unit in each row"),
             ("%H:%M:%S".into(), "+01:30:00, may pass 24h"),
+            ("%H:%M".into(), "+01:30"),
+            ("%M:%S".into(), "+90:00"),
             ("iso".into(), "PT1H30M"),
         ],
         // Money: the places it is spent in by default, and a sign to show it by.
