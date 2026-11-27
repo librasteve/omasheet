@@ -65,11 +65,20 @@
 - {name: DataRate,    dims: {Data: 1, Time: -1},   unit: "b.s^-1"}
 - {name: DataDensity, dims: {Data: 1, Length: -2}, unit: "b.m^-2"}
 
+- {name: Tokens,        dims: {Token: 1},               unit: tok}
+- {name: TokenRate,     dims: {Token: 1, Time: -1},     unit: "tok.s^-1"}
+- {name: Flops,         dims: {Flop: 1},                unit: flop}
+- {name: FlopRate,      dims: {Flop: 1, Time: -1},      unit: FLOPS}
+- {name: Operations,    dims: {Operation: 1},           unit: op}
+- {name: OperationRate, dims: {Operation: 1, Time: -1}, unit: OPS}
+- {name: Pixels,        dims: {Pixel: 1},               unit: px}
+
 - {name: Angle,             dims: {Angle: 1},                          unit: rad}
 - {name: SolidAngle,        dims: {Angle: 2},                          unit: sr}
 - {name: AngularSpeed,      dims: {Angle: 1, Time: -1},                unit: "rad.s^-1"}
 - {name: LuminousFlux,      dims: {LuminousIntensity: 1, Angle: 2},    unit: lm}
 - {name: Illuminance,       dims: {LuminousIntensity: 1, Angle: 2, Length: -2}, unit: lx}
+- {name: Luminance,         dims: {LuminousIntensity: 1, Length: -2},          unit: nit}
 
 # Money: the US dollar, `$`, is the base unit; the rest are worth what the rates say.
 - {name: Currency, dims: {Currency: 1}, unit: USD}

@@ -64,9 +64,30 @@ Data has two units, the bit `b` and the byte `B`, and takes the SI prefixes as w
 30MB
 ```
 
+## Computing
+
+| Unit | Counts | Rate | Kinds |
+| --- | --- | --- | --- |
+| `tok` | tokens | `tok.s^-1` | `Tokens`, `TokenRate` |
+| `flop` | floating point operations | `FLOPS` | `Flops`, `FlopRate` |
+| `op` | other operations | `OPS`, or `IOPS` for storage | `Operations`, `OperationRate` |
+| `px` | pixels | | `Pixels` |
+| `b` | bits | `bps` | `Data`, `DataRate` |
+
+All take the SI prefixes: `Mtok`, `PFLOPS`, `TOPS`, `kIOPS`, `Mpx`, `Gbps`. Each of tokens, floating point operations, other operations and pixels is a dimension of its own, so adding one to another is an error. They combine with any unit, for a price or an efficiency:
+
+```text
+> 1000tok / 20s
+50tok⋅s⁻¹
+> 2Mtok * 3USD.Mtok^-1
+6USD
+```
+
+A named rate stays as it is written in a product or quotient, so ask for the unit wanted: `(1MiB / 1Mbps).to('s')` is `8.389s·`.
+
 ## Angles, temperature and time
 
-Angles have the radian `rad`, the steradian `sr` and the degree, minute and second of arc, written together as `45°30′30″`; `sin`, `cos` and `tan` take an angle in any unit. `20°C` is Celsius, and an interval of two temperatures keeps the unit: `20°C - 10°C` is `10°C`. Time has `s`, `min`, `h`, `d`, `wk` and `yr`, and a `Duration` column holds a length of time with its own display format, as in the benchmark sheet's `Duration[ms; v_.1f]`.
+Angles have the radian `rad`, the steradian `sr` and the degree, minute and second of arc, written together as `45°30′30″`; `sin`, `cos` and `tan` take an angle in any unit. `20°C` is Celsius, and an interval of two temperatures keeps the unit: `20°C - 10°C` is `10°C`. Light has the candela `cd`, the lumen `lm`, the lux `lx` and, for the brightness of a screen, the `nit`, a candela per square metre (`1000nit`, kind `Luminance`). Time has `s`, `min`, `h`, `d`, `wk` and `yr`, and a `Duration` column holds a length of time with its own display format, as in the benchmark sheet's `Duration[ms; v_.1f]`.
 
 ## Money
 

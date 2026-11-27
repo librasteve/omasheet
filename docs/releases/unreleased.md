@@ -11,12 +11,24 @@ Notes for the release after 0.1.12, kept here until it is cut. The items marked 
 
 - **`plot Name` declares a plot** of a sheet in the file, with `key: value` controls ([Plots](../format.md#plots)): fourteen kinds (`line`, `bar`, `pie`, `candle`, `scatter`, `area`, `stacked`, `step`, `histogram`, `box`, `heatmap`, `waterfall`, `bubble`, `donut`), and `x`, `y`, `title`, `width`, `height`, `bins`, `k`, `labels`, `ticks`, `units`, `origin`, `logx`, `logy`, `fit`, `legend` and `palette` (seven palettes). A version from before plots stops at a `plot` line.
 - **Reports** draw a plot as an SVG where `{{ Name }}` is written, or in place in an `omx` block ([Reports](../reports.md#plots)). `examples/plots.omx` and `examples/plots-report.md` have one of each kind.
-- **Plot pane (F7):** the plots of the sheet on view, one at a time, drawn in the theme's colours. A click on a line, a bar or a heatmap cell lights its row in the sheet. The settings pane has the kind as tiles (a kind the data does not suit is dimmed, with why), the data, the columns as chips, the options and the palette; each change is one step to undo and a change that would make the file wrong is refused. F7 steps round the plots, the settings and neither; `+ Plot` makes one.
+- **Plot pane (F7):** the plots of the sheet on view, one at a time, drawn in the theme's colours. A click on a line, a bar or a heatmap cell lights its row in the sheet. The settings pane has the kind as tiles (a kind the data does not suit is dimmed, with why), the data, the columns as chips, the options and the palette; each change is one step to undo and a change that would make the file wrong is refused. F7 steps round the plots, the settings and neither; `+ Plot` makes one. The footer's bars button is lit in the accent colour where the sheet on view has a plot. While it is open, the columns the plot shows are tinted in the sheet. A new drawing fades in over the last as the pane changes, with nothing blanking. The settings can stand beside the plot or under it.
 - **Set panels** cascade when several are open, F4 moves between them, Escape closes them one at a time and a click on the sheet closes them all.
 - **Sequences** go on in Unicode order: `'α' ... 'ω'`, `'♈' ... '♓'`.
 
+## Fixes
+
+- A row picked by number from a calculated sheet, `Top[Item; 0]`, was refused as out of range.
+
+## Horizontal bars
+
+- `type: hstacked` is `hbar` with the values of a row stacked in one bar.
+- `type: hbar` is a bar plot on its side, with the labels down the left and, with `labels: y`, each value at the end of its bar. `examples/showcase/developers.omx` ranks graphics cards and processors with it.
+
 ## Breaking
 
+- **Computing units:** `tok`, `flop`, `op` and `px`, each a dimension of its own, with `FLOPS`, `OPS`, `IOPS` and `bps` for rates, and the kinds `Tokens`, `TokenRate`, `Flops`, `FlopRate`, `Operations`, `OperationRate` and `Pixels`.
+- **Nits:** `nit`, a candela per square metre, for a screen's brightness, with the kind `Luminance`.
+- **Units follow the column.** Setting a column's type, unit or format offers to remove the units its cells carry, and to convert bare numbers when the unit changes.
 - **`Duration` is a kind of `Quantity`, for time.** A bare `Duration` column now shows seconds, `Duration[s]`, in its head with numbers in its cells (`5400`), where it showed `PT1H30M`. Ask for the old look with `Duration[iso]`. `Duration[h; .2f]`, `Duration[min]` and `Duration[%H:%M:%S]` are new.
 - **`.Quantity` and `.Duration` are gone.** A `Duration` is already a quantity of time, so there is nothing to convert: `PT90M.Quantity` is `PT90M`, and `5400s.Duration` is `5400s` in a `Duration` column. There is no compatibility form.
 - **An uncertainty on a `Duration`** (`10.5(3)s`) is held as seconds and the column is calculated by the engine; it cannot move a date or a time, which are exact.

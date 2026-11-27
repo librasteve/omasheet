@@ -13,6 +13,7 @@ pub mod numfmt;
 pub mod plot;
 pub mod quantity;
 pub mod rates;
+mod unitcells;
 pub mod value;
 pub mod window;
 pub mod zone;

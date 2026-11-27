@@ -315,6 +315,13 @@ pub mod qobject {
             count: i32,
             format: &QString,
         ) -> QString;
+        /// What to ask of the cells a change of type, unit or format leaves
+        /// to be rewritten, or empty.
+        #[qinvokable]
+        fn unit_question(self: &File) -> QString;
+        /// Rewrite them.
+        #[qinvokable]
+        fn rewrite_units(self: Pin<&mut File>, sheet: i32);
         /// How the constants' values are shown, or empty.
         #[qinvokable]
         fn const_format(self: &File) -> QString;
@@ -581,6 +588,12 @@ pub mod qobject {
         /// Keep whether the plot settings pane is shown.
         #[qinvokable]
         fn save_plot_settings(self: &File, shown: bool);
+        /// Whether the plot settings stand under the plot, not beside it.
+        #[qinvokable]
+        fn saved_plot_settings_below(self: &File) -> bool;
+        /// Keep where the plot settings stand.
+        #[qinvokable]
+        fn save_plot_settings_below(self: &File, below: bool);
         /// The file last opened or saved, if it is still there; empty if not.
         #[qinvokable]
         fn last_file(self: &File) -> QString;
@@ -855,6 +868,7 @@ impl qobject::File {
         QString::from(&json::plot_info(
             &controls,
             &doc.plot_columns(&name),
+            &doc.plot_drawn_columns(&name),
             &doc.plot_numeric_columns(&name),
             &doc.plot_unit_columns(&name),
             &doc.plot_fit(&name),
@@ -1536,6 +1550,14 @@ impl qobject::File {
         })
     }
 
+    fn unit_question(&self) -> QString {
+        QString::from(self.rust().doc.unit_question().unwrap_or(""))
+    }
+
+    fn rewrite_units(self: Pin<&mut Self>, sheet: i32) {
+        self.edit_sheet(sheet, Document::rewrite_units);
+    }
+
     fn const_format(&self) -> QString {
         QString::from(self.rust().doc.const_format())
     }
@@ -1989,6 +2011,14 @@ impl qobject::File {
 
     fn save_plot_settings(&self, shown: bool) {
         crate::theme::write_config("plot-settings", if shown { "1" } else { "0" });
+    }
+
+    fn saved_plot_settings_below(&self) -> bool {
+        crate::theme::read_config("plot-settings-place").trim() == "below"
+    }
+
+    fn save_plot_settings_below(&self, below: bool) {
+        crate::theme::write_config("plot-settings-place", if below { "below" } else { "beside" });
     }
 
     fn last_file(&self) -> QString {

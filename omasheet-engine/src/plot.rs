@@ -91,6 +91,55 @@ pub fn columns(engine: &Engine, program: &Program, plot: &Plot) -> Vec<String> {
     }
 }
 
+/// The columns of a plot's data: that of its labels, and those of its
+/// values.
+fn chosen(engine: &Engine, program: &Program, plot: &Plot, view: &View) -> (Option<usize>, Vec<usize>) {
+    let cols = &program.sheets[view.sheet].cols;
+    let find = |name: &str| view.cols.iter().copied().find(|&c| cols[c].name == name);
+    let x_col = match &plot.x {
+        Some(name) => find(name),
+        None => view.cols.first().copied(),
+    };
+    let y_cols: Vec<usize> = if plot.y.is_empty() {
+        // Left unsaid, the columns of numbers: text beside them is no value.
+        let rest: Vec<usize> = view.cols.iter().copied().filter(|&c| Some(c) != x_col).collect();
+        let numbers: Vec<usize> = rest
+            .iter()
+            .copied()
+            .filter(|&c| {
+                view.rows.iter().take(2000).all(|&r| number(&engine.cell_shown(view.sheet, c, r)).is_ok())
+            })
+            .collect();
+        if numbers.is_empty() { rest } else { numbers }
+    } else {
+        plot.y.iter().filter_map(|n| find(n)).collect()
+    };
+    (x_col, y_cols)
+}
+
+/// The names of the columns a plot shows: that of its labels, where its kind
+/// has them, and those of the values it draws.
+pub fn drawn_columns(engine: &Engine, program: &Program, plot: &Plot) -> Vec<String> {
+    let Some(Value::Sheet(view)) = engine.eval_top(&plot.data) else {
+        engine.take_diags();
+        return Vec::new();
+    };
+    let (x_col, mut drawn) = chosen(engine, program, plot, &view);
+    match plot.kind.as_str() {
+        "pie" | "donut" | "waterfall" => drawn.truncate(1),
+        "bubble" => drawn.truncate(2),
+        _ => {}
+    }
+    // A histogram's bins and a box's names are not from a column.
+    if !matches!(plot.kind.as_str(), "histogram" | "box") {
+        drawn.extend(x_col);
+    }
+    drawn
+        .into_iter()
+        .map(|c| program.sheets[view.sheet].cols[c].name.clone())
+        .collect()
+}
+
 /// The columns of that sheet whose values can be plotted: numbers, with
 /// empty cells, as far as the first rows say.
 pub fn numeric_columns(engine: &Engine, program: &Program, plot: &Plot) -> Vec<String> {
@@ -173,7 +222,7 @@ pub fn origin_in(engine: &Engine, program: &Program, plot: &Plot) -> (bool, bool
         r
     };
     let spans = |r: Option<(f64, f64)>| r.is_some_and(|(a, b)| a <= 0.0 && b >= 0.0);
-    let from_zero = matches!(plot.kind.as_str(), "bar" | "area" | "stacked" | "histogram" | "waterfall");
+    let from_zero = matches!(plot.kind.as_str(), "bar" | "hbar" | "hstacked" | "area" | "stacked" | "histogram" | "waterfall");
     (
         x_col.is_some_and(|c| spans(reach(&[c]))),
         from_zero || spans(reach(&y_cols)),
@@ -270,27 +319,9 @@ pub fn draw_as(
     }
 
     let cols = &program.sheets[view.sheet].cols;
-    let find = |name: &str| view.cols.iter().copied().find(|&c| cols[c].name == name);
-    let x_col = match &plot.x {
-        Some(name) => find(name),
-        None => view.cols.first().copied(),
-    };
+    let (x_col, y_cols) = chosen(engine, program, plot, &view);
     let Some(x_col) = x_col else {
         return Err(one(plot.span, "the plot has no column for its labels".to_string()));
-    };
-    let y_cols: Vec<usize> = if plot.y.is_empty() {
-        // Left unsaid, the columns of numbers: text beside them is no value.
-        let rest: Vec<usize> = view.cols.iter().copied().filter(|&c| c != x_col).collect();
-        let numbers: Vec<usize> = rest
-            .iter()
-            .copied()
-            .filter(|&c| {
-                view.rows.iter().take(2000).all(|&r| number(&engine.cell_shown(view.sheet, c, r)).is_ok())
-            })
-            .collect();
-        if numbers.is_empty() { rest } else { numbers }
-    } else {
-        plot.y.iter().filter_map(|n| find(n)).collect()
     };
     if y_cols.is_empty() {
         return Err(one(
@@ -321,7 +352,7 @@ pub fn draw_as(
         "straight" => omasheet_plot::Fit::Straight,
         "quadratic" => omasheet_plot::Fit::Quadratic,
         "bezier" => omasheet_plot::Fit::Bezier,
-        "basic" => omasheet_plot::Fit::None,
+        "none" => omasheet_plot::Fit::None,
         // Left unsaid, a line is smoothed and any other plot is as it is.
         _ if kind == "line" => omasheet_plot::Fit::Bezier,
         _ => omasheet_plot::Fit::None,

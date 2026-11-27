@@ -32,6 +32,9 @@ ApplicationWindow {
     readonly property color lineColor: Qt.rgba(textColor.r, textColor.g, textColor.b, 0.14)
     readonly property color panelColor: Qt.rgba(textColor.r, textColor.g, textColor.b, 0.05)
     readonly property color computedTint: Qt.rgba(accentColor.r, accentColor.g, accentColor.b, 0.07)
+    // The columns the plot in the pane shows: their heads, and their cells.
+    readonly property color plottedHeadTint: Qt.rgba(accentColor.r, accentColor.g, accentColor.b, 0.24)
+    readonly property color plottedTint: Qt.rgba(accentColor.r, accentColor.g, accentColor.b, 0.13)
     // The backing of what is drawn over the sheet: a cell opened out to the
     // lines it holds, the formula box open to several of them. Opaque: what
     // is under it is covered rather than read through, the border being
@@ -400,14 +403,24 @@ ApplicationWindow {
     property real plotSettingsPref: 0
     property real kindTilesPref: 0
     property real palettePref: 0
-    readonly property int plotSettingsWidth: showPlotSettings
+    // The settings may stand under the plot instead, as tall as dragged: where
+    // is kept from one run to the next.
+    property bool plotSettingsBelow: file.savedPlotSettingsBelow()
+    onPlotSettingsBelowChanged: {
+        file.savePlotSettingsBelow(plotSettingsBelow);
+        Qt.callLater(win.drawPlot);
+    }
+    property real plotSettingsTall: 0
+    readonly property int plotSettingsHeight: showPlotSettings && plotSettingsBelow
+        ? Math.round(Math.max(fontSize * 10, Math.min(plotSettingsTall > 0 ? plotSettingsTall : grid.height * 0.45, grid.height - fontSize * 14))) : 0
+    readonly property int plotSettingsWidth: showPlotSettings && !plotSettingsBelow
         ? Math.round(Math.max(fontSize * 16, Math.min(plotSettingsPref > 0 ? plotSettingsPref : fontSize * 22, width * 0.45))) : 0
     // What the plots take of the window, settings and all: the divider is
     // here, and it does not move as the settings come and go.
     readonly property int plotTotalWidth: Math.max(fontSize * 18 + plotSettingsWidth, Math.min(plotShare * width, width))
     readonly property int plotPaneWidth: plotTotalWidth - plotSettingsWidth
     property var plotNames: []
-    readonly property var plotKinds: ["line", "bar", "pie", "candle", "scatter", "area", "stacked", "step", "histogram", "box", "heatmap", "waterfall", "bubble", "donut"]
+    readonly property var plotKinds: ["line", "bar", "pie", "candle", "scatter", "area", "stacked", "step", "histogram", "box", "heatmap", "waterfall", "bubble", "donut", "hbar", "hstacked"]
     property var plotAllNames: []
     property var plotParents: []
     property int plotIndex: 0
@@ -421,13 +434,29 @@ ApplicationWindow {
     property var plotInfo: ({ controls: {}, columns: [] })
     property string plotInfoText: ""
     property string plotProblem: ""
+    // The columns of the sheet on view that the plot in the pane shows, by
+    // index.
+    readonly property var plotDrawn: {
+        var out = {};
+        if (!showPlot || showSource || plotIndex >= plotNames.length
+                || plotParents[plotAllNames.indexOf(plotNames[plotIndex])] !== sheet.name)
+            return out;
+        var drawn = plotInfo.drawn || [];
+        for (var c = 0; c < sheet.columns.length; c++)
+            if (drawn.indexOf(sheet.columns[c].name) >= 0)
+                out[c] = true;
+        return out;
+    }
     // A plot to go to once the list of them is read again: the new one.
     property string plotWant: ""
     function drawPlot() {
         var all = [], parents = [];
         try { all = JSON.parse(file.plotsJson()); parents = JSON.parse(file.plotParentsJson()); } catch (e) { all = []; }
-        plotAllNames = all;
-        plotParents = parents;
+        // Only a change is taken here too, or the tabs are made again, and flash.
+        if (JSON.stringify(all) !== JSON.stringify(plotAllNames))
+            plotAllNames = all;
+        if (JSON.stringify(parents) !== JSON.stringify(plotParents))
+            plotParents = parents;
         // The plot just made or renamed is shown wherever it is from.
         var names = [];
         // The constants have no plots.
@@ -436,7 +465,8 @@ ApplicationWindow {
         for (var i = 0; i < all.length && !consts; i++)
             if (here.length === 0 || parents[i] === here || all[i] === plotWant)
                 names.push(all[i]);
-        plotNames = names;
+        if (JSON.stringify(names) !== JSON.stringify(plotNames))
+            plotNames = names;
         if (plotWant.length > 0) {
             var at = names.indexOf(plotWant);
             if (at >= 0) plotIndex = at;
@@ -456,10 +486,12 @@ ApplicationWindow {
             plotInfoText = info;
             try { plotInfo = JSON.parse(info); } catch (e) { }
         }
-        if (!showPlot) {
-            plotSvg = "";
+        // Put away, the last drawing is kept, to be there until the next one.
+        if (!showPlot)
             return;
-        }
+        // The tabs may take another line: laid out before the room is measured.
+        plotTabs.forceLayout();
+        plotHeader.forceLayout();
         var w = Math.max(100, plotPane.width - 24);
         var h = Math.max(100, plotPane.height - plotHeader.height - 36);
         plotDrawW = Math.round(w);
@@ -1059,6 +1091,9 @@ ApplicationWindow {
             w += colWidths[c] || 0;
         return w <= hflick.width / 2 ? n : 0;
     }
+    // The colour of a margin that stays put as the sheet scrolls under it:
+    // laid on the page, since the margins' own tints are see-through.
+    function pinnedFill(pinned, tint) { return pinned ? Qt.tint(overColor, tint) : tint; }
     readonly property bool frozen: frozenRows > 0 || frozenCols > 0
     // Where the frozen columns end, from the left of the sheet.
     readonly property real frozenEdge: {
@@ -2379,28 +2414,62 @@ ApplicationWindow {
     // width. A grip half way down says that it can be dragged, since not
     // every desktop shows the pointer change plainly; both take the accent
     // under the pointer.
+    // One drawing of a plot, on a page of its own to fade in over the last.
+    component PlotShot: Rectangle {
+        property int drawW
+        property int drawH
+        property string plot
+        property alias source: shotImage.source
+        readonly property alias status: shotImage.status
+        readonly property alias imageWidth: shotImage.width
+        readonly property alias imageHeight: shotImage.height
+        readonly property alias paintedWidth: shotImage.paintedWidth
+        readonly property alias paintedHeight: shotImage.paintedHeight
+        anchors.fill: parent
+        color: win.pageColor
+        opacity: 0
+        Image {
+            id: shotImage
+            x: 12
+            // The size it was drawn at, or less where the pane has no room for
+            // that: scaled whole, never cut off.
+            width: Math.max(0, Math.min(parent.drawW, parent.width - 24))
+            height: Math.max(0, Math.min(parent.drawH, parent.height - 8))
+            fillMode: Image.PreserveAspectFit
+            horizontalAlignment: Image.AlignHCenter
+            verticalAlignment: Image.AlignTop
+            sourceSize.width: parent.drawW * Screen.devicePixelRatio
+            sourceSize.height: parent.drawH * Screen.devicePixelRatio
+        }
+    }
+
     component PaneEdge: MouseArea {
         id: paneEdge
         readonly property bool lit: containsMouse || pressed
         // Where the line is, from the left of this.
         property int lineAt: 3
-        x: -lineAt
+        // Along the top, between one pane and the one under it, in place of
+        // down the left side.
+        property bool flat: false
+        x: flat ? 0 : -lineAt
+        y: flat ? -lineAt : 0
         z: 2
-        width: 9
-        height: parent.height
+        width: flat ? parent.width : 9
+        height: flat ? 9 : parent.height
         hoverEnabled: true
-        cursorShape: Qt.SplitHCursor
+        cursorShape: flat ? Qt.SplitVCursor : Qt.SplitHCursor
         Rectangle {
-            x: paneEdge.lineAt
-            width: paneEdge.lit ? 2 : 1
-            height: parent.height
+            x: paneEdge.flat ? 0 : paneEdge.lineAt
+            y: paneEdge.flat ? paneEdge.lineAt : 0
+            width: paneEdge.flat ? paneEdge.width : paneEdge.lit ? 2 : 1
+            height: !paneEdge.flat ? paneEdge.height : paneEdge.lit ? 2 : 1
             color: paneEdge.lit ? win.accentColor : win.lineColor
         }
         Rectangle {
-            x: Math.max(0, paneEdge.lineAt - 2)
-            anchors.verticalCenter: parent.verticalCenter
-            width: 6
-            height: Math.min(44, parent.height)
+            x: paneEdge.flat ? (paneEdge.width - width) / 2 : Math.max(0, paneEdge.lineAt - 2)
+            y: paneEdge.flat ? Math.max(0, paneEdge.lineAt - 2) : (paneEdge.height - height) / 2
+            width: paneEdge.flat ? Math.min(44, paneEdge.width) : 6
+            height: paneEdge.flat ? 6 : Math.min(44, paneEdge.height)
             radius: 3
             color: paneEdge.lit ? win.accentColor : Qt.tint(win.pageColor,
                 Qt.rgba(win.textColor.r, win.textColor.g, win.textColor.b, 0.5))
@@ -3808,8 +3877,20 @@ ApplicationWindow {
     // Open a picker beside the head of the first selected column.
     // The format of the selected columns, or of the constants' values.
     function setFormatOf(text) {
-        return sheet.isConsts ? file.setConstFormat(text)
-            : file.setColumnFormat(tab, selLeft, selRight - selLeft + 1, text);
+        if (sheet.isConsts)
+            return file.setConstFormat(text);
+        var problem = file.setColumnFormat(tab, selLeft, selRight - selLeft + 1, text);
+        offerUnits();
+        return problem;
+    }
+    // Ask about cells that a change of type, unit or format leaves behind,
+    // once the change, which may be made in two steps, is done.
+    function offerUnits() {
+        Qt.callLater(function() {
+            var question = file.unitQuestion();
+            if (question.length > 0)
+                unitsDialog.ask(question);
+        });
     }
     function checkFormatOf(text) {
         return sheet.isConsts ? file.checkConstFormat(text)
@@ -3956,6 +4037,7 @@ ApplicationWindow {
         if (sheet.isConsts)
             return;
         file.setColumnTypes(tab, selLeft, selRight - selLeft + 1, type);
+        offerUnits();
     }
 
     // The menu a right-click opens, from the keyboard: for the selection as
@@ -5188,9 +5270,9 @@ ApplicationWindow {
                             transform: Translate { x: win.frozenCols > 0 ? hflick.contentX : 0 }
                             width: win.gutterWidth
                             height: win.headerHeight
-                            color: win.selKind === "all"
+                            color: win.pinnedFill(win.frozenCols > 0, win.selKind === "all"
                                 ? Qt.rgba(win.accentColor.r, win.accentColor.g, win.accentColor.b, 0.16)
-                                : win.panelColor
+                                : win.panelColor)
                             // The whole sheet copied or cut is outlined round its margins.
                             readonly property bool marked: win.outline !== null && win.outline.rows && win.outline.columns
                             MarkEdge { visible: parent.marked; width: parent.width; height: 1 }
@@ -5287,13 +5369,21 @@ ApplicationWindow {
                                 visible: width > 0
                                 height: win.headerHeight
                                 // Stronger while the sort and filter box beside it is open.
-                                color: (columnPopup.visible && columnPopup.col === index)
+                                color: win.pinnedFill(index < win.frozenCols, (columnPopup.visible && columnPopup.col === index)
                                     || ((typePopup.visible || unitPopup.visible || formatPopup.visible)
                                         && index >= win.selLeft && index <= win.selRight)
                                     ? Qt.rgba(win.accentColor.r, win.accentColor.g, win.accentColor.b, 0.4)
                                     : index >= win.selLeft && index <= win.selRight
                                     ? Qt.rgba(win.accentColor.r, win.accentColor.g, win.accentColor.b, 0.16)
-                                    : win.panelColor
+                                    : win.plotDrawn[index] ? win.plottedHeadTint
+                                    : win.panelColor)
+                                // Shown in the plot beside the sheet.
+                                Rectangle {
+                                    visible: !!win.plotDrawn[headCell.index]
+                                    width: parent.width
+                                    height: 3
+                                    color: win.accentColor
+                                }
                                 Column {
                                     id: headLabels
                                     anchors.verticalCenter: parent.verticalCenter
@@ -5673,9 +5763,9 @@ ApplicationWindow {
                                 transform: Translate { x: win.frozenCols > 0 ? hflick.contentX : 0 }
                                 width: win.gutterWidth
                                 height: rowItem.height
-                                color: rowItem.row >= win.selTop && rowItem.row <= win.selBottom
+                                color: win.pinnedFill(win.frozenCols > 0, rowItem.row >= win.selTop && rowItem.row <= win.selBottom
                                     ? Qt.rgba(win.accentColor.r, win.accentColor.g, win.accentColor.b, 0.16)
-                                    : win.panelColor
+                                    : win.panelColor)
                                 Text {
                                     anchors.centerIn: parent
                                     anchors.horizontalCenterOffset: win.rowCaretWidth / 2
@@ -5787,6 +5877,7 @@ ApplicationWindow {
                                     color: pinnedCol ? Qt.tint(win.pageColor, plainColor) : plainColor
                                     readonly property color plainColor: (selected && !alone) || marked
                                         ? Qt.rgba(win.selectionFill.r, win.selectionFill.g, win.selectionFill.b, 0.55)
+                                        : win.plotDrawn[index] ? win.plottedTint
                                         : column && column.computed ? win.computedTint : "transparent"
 
                                     Text {
@@ -6707,7 +6798,7 @@ ApplicationWindow {
                 FooterButton { id: addColumnButton; label: "+ Column"; quiet: true; visible: !footerBar.narrow; enabled: !win.sheet.isConsts && win.tabs.length > 0; onClicked: promptDialog.ask("column") }
                 FooterButton { id: addConstantButton; label: "+ Constant"; quiet: true; visible: !footerBar.narrow; onClicked: promptDialog.ask("const") }
                 FooterButton { id: fnButton; label: "fn()"; quiet: true; onClicked: functionsDialog.open() }
-                FooterButton { id: plotButton; label: "plot"; bars: true; quiet: true; active: win.showPlot; tip: "Show the plots of the file (F7)"; onClicked: win.showPlot = !win.showPlot }
+                FooterButton { id: plotButton; label: "plot"; bars: true; quiet: true; active: win.showPlot; lit: win.plotNames.length > 0; tip: "Show the plots of the file (F7)"; onClicked: win.showPlot = !win.showPlot }
                 FooterButton { id: sourceButton; label: "</>"; quiet: true; active: win.showSource; onClicked: win.viewSource(!win.showSource) }
                 FooterButton { id: helpButton; label: "?"; quiet: true; onClicked: helpDialog.open() }
             }
@@ -6923,7 +7014,7 @@ ApplicationWindow {
         x: root.width - win.plotTotalWidth
         y: grid.y
         width: win.plotPaneWidth
-        height: grid.height
+        height: grid.height - win.plotSettingsHeight
         color: win.pageColor
         clip: true
         onWidthChanged: plotTimer.restart()
@@ -7031,6 +7122,7 @@ ApplicationWindow {
             onHeightChanged: plotTimer.restart()
 
             Flow {
+                id: plotTabs
                 width: parent.width
                 spacing: 2
                 Repeater {
@@ -7076,32 +7168,75 @@ ApplicationWindow {
             }
         }
 
-        Image {
-            id: plotImage
+        // The drawing, held in two: a new one is read into the one out of
+        // sight, and fades in over the old when it is ready, so that nothing
+        // blanks as the pane changes.
+        Item {
+            id: plotView
             visible: win.plotSvg.indexOf("<svg") === 0
-            x: 12
             y: plotHeader.y + plotHeader.height + 8
-            // The size it was drawn at, not the pane's: until it is drawn
-            // again the old picture stays as it was, and is not stretched.
-            width: win.plotDrawW
-            height: win.plotDrawH
-            fillMode: Image.PreserveAspectFit
-            horizontalAlignment: Image.AlignHCenter
-            verticalAlignment: Image.AlignTop
-            sourceSize.width: width * Screen.devicePixelRatio
-            sourceSize.height: height * Screen.devicePixelRatio
-            source: visible ? "data:image/svg+xml;utf8," + encodeURIComponent(win.plotSvg) : ""
+            width: parent.width
+            height: Math.max(0, parent.height - y)
+            property var front: null
+            property var coming: null
+            function show() {
+                if (win.plotSvg.indexOf("<svg") !== 0)
+                    return;
+                plotFade.complete();
+                var next = front === plotShotA ? plotShotB : plotShotA;
+                coming = null;
+                next.opacity = 0;
+                next.source = "";
+                next.drawW = win.plotDrawW;
+                next.drawH = win.plotDrawH;
+                next.plot = win.plotNames[win.plotIndex] || "";
+                coming = next;
+                next.source = "data:image/svg+xml;utf8," + encodeURIComponent(win.plotSvg);
+                arrive();
+            }
+            function arrive() {
+                if (coming === null || coming.status !== Image.Ready)
+                    return;
+                var older = front;
+                front = coming;
+                coming = null;
+                front.z = 1;
+                if (older !== null)
+                    older.z = 0;
+                plotFade.older = older;
+                plotFade.target = front;
+                plotFade.restart();
+            }
+            Connections {
+                target: win
+                function onPlotSvgChanged() { plotView.show(); }
+            }
+            NumberAnimation {
+                id: plotFade
+                property var older: null
+                property: "opacity"
+                from: 0
+                to: 1
+                duration: 180
+                onFinished: if (older !== null) older.opacity = 0
+            }
+            PlotShot { id: plotShotA; onStatusChanged: plotView.arrive() }
+            PlotShot { id: plotShotB; onStatusChanged: plotView.arrive() }
 
             // A click on a mark lights up the row it stands for.
             MouseArea {
-                anchors.fill: parent
+                z: 2
+                x: 12
+                width: plotView.front ? plotView.front.imageWidth : 0
+                height: plotView.front ? plotView.front.imageHeight : 0
                 cursorShape: Qt.PointingHandCursor
                 onClicked: function(mouse) {
-                    if (plotImage.paintedWidth <= 0 || win.plotNames.length === 0)
+                    var shot = plotView.front;
+                    if (shot.paintedWidth <= 0 || win.plotNames[win.plotIndex] !== shot.plot)
                         return;
-                    var u = (mouse.x - (plotImage.width - plotImage.paintedWidth) / 2) / plotImage.paintedWidth * win.plotDrawW;
-                    var v = mouse.y / plotImage.paintedHeight * win.plotDrawH;
-                    var found = file.plotCellAt(win.plotNames[win.plotIndex], win.plotDrawW, win.plotDrawH, u, v);
+                    var u = (mouse.x - (width - shot.paintedWidth) / 2) / shot.paintedWidth * shot.drawW;
+                    var v = mouse.y / shot.paintedHeight * shot.drawH;
+                    var found = file.plotCellAt(shot.plot, shot.drawW, shot.drawH, u, v);
                     if (found.length === 0)
                         return;
                     var at = JSON.parse(found);
@@ -7119,7 +7254,8 @@ ApplicationWindow {
 
         // Nothing to draw: there is none, or it could not be.
         Text {
-            visible: win.plotSvg.indexOf("<svg") !== 0
+            // Not while the first drawing is still to come.
+            visible: win.plotNames.length === 0 || (win.plotSvg.length > 0 && win.plotSvg.indexOf("<svg") !== 0)
             x: 16
             y: plotHeader.y + plotHeader.height + 12
             width: parent.width - 32
@@ -7172,22 +7308,43 @@ ApplicationWindow {
             }
         }
         x: root.width - width
-        y: grid.y
-        width: win.plotSettingsWidth
-        height: grid.height
+        y: grid.y + grid.height - height
+        width: win.plotSettingsBelow ? win.plotTotalWidth : win.plotSettingsWidth
+        height: win.plotSettingsBelow ? win.plotSettingsHeight : grid.height
         color: win.pageColor
 
-        // The edge: take hold of it to change the width of the settings.
+        // The edge: take hold of it to change the width of the settings, or,
+        // under the plot, of the plot and its settings together.
         PaneEdge {
             property real startX: 0
             property real startWidth: 0
             onPressed: function(mouse) {
                 startX = mapToItem(root, mouse.x, 0).x;
-                startWidth = win.plotSettingsWidth;
+                startWidth = parent.width;
+            }
+            onPositionChanged: function(mouse) {
+                if (!pressed)
+                    return;
+                var wide = startWidth - (mapToItem(root, mouse.x, 0).x - startX);
+                if (win.plotSettingsBelow)
+                    win.plotShare = Math.min(1, Math.max(0.1, wide / win.width));
+                else
+                    win.plotSettingsPref = wide;
+            }
+        }
+        // Under the plot, the edge between them: their heights.
+        PaneEdge {
+            visible: win.plotSettingsBelow
+            flat: true
+            property real startY: 0
+            property real startHeight: 0
+            onPressed: function(mouse) {
+                startY = mapToItem(root, 0, mouse.y).y;
+                startHeight = win.plotSettingsHeight;
             }
             onPositionChanged: function(mouse) {
                 if (pressed)
-                    win.plotSettingsPref = startWidth - (mapToItem(root, mouse.x, 0).x - startX);
+                    win.plotSettingsTall = startHeight - (mapToItem(root, 0, mouse.y).y - startY);
             }
         }
 
@@ -7208,6 +7365,7 @@ ApplicationWindow {
             visible: win.plotNames.length > 0
             anchors.fill: parent
             anchors.leftMargin: 1
+            anchors.topMargin: win.plotSettingsBelow ? 6 : 0
             contentHeight: settingsColumn.height + 28
             clip: true
             boundsBehavior: Flickable.StopAtBounds
@@ -7226,7 +7384,7 @@ ApplicationWindow {
                     height: nameColumn.height
                     Column {
                         id: nameColumn
-                        width: parent.width - moreButton.width - 4
+                        width: parent.width - moreButton.width - placeButtons.width - 4
                         Text {
                             width: parent.width
                             elide: Text.ElideRight
@@ -7250,6 +7408,28 @@ ApplicationWindow {
                             text: {
                                 var at = win.plotAllNames.indexOf(win.plotNames[win.plotIndex]);
                                 return at >= 0 && win.plotParents[at] ? "reads " + win.plotParents[at] : "";
+                            }
+                        }
+                    }
+                    // Where the settings stand: beside the plot, or under it. Both
+                    // are shown, the one in use lit.
+                    Row {
+                        id: placeButtons
+                        anchors.right: moreButton.left
+                        Repeater {
+                            model: [false, true]
+                            FooterButton {
+                                id: placeButton
+                                required property bool modelData
+                                property bool navStop: true
+                                active: win.plotSettingsBelow === modelData
+                                tip: modelData ? "Settings under the plot" : "Settings beside the plot"
+                                onClicked: win.plotSettingsBelow = modelData
+                                PlaceGlyph {
+                                    anchors.centerIn: parent
+                                    below: placeButton.modelData
+                                    ink: placeButton.active ? win.accentColor : win.mutedColor
+                                }
                             }
                         }
                     }
@@ -7476,8 +7656,8 @@ ApplicationWindow {
                     readonly property var unitCols: win.plotInfo.unitCols || []
                     readonly property bool xHasUnit: unitCols.indexOf(xName) >= 0
                     readonly property bool yHasUnit: current.some(function(c) { return unitCols.indexOf(c) >= 0; })
-                    readonly property bool cartesian: onAxes || kind === "histogram" || kind === "box"
-                    readonly property bool labelsOk: onAxes || kind === "histogram"
+                    readonly property bool cartesian: onAxes || kind === "hbar" || kind === "hstacked" || kind === "histogram" || kind === "box"
+                    readonly property bool labelsOk: onAxes || kind === "hbar" || kind === "hstacked" || kind === "histogram"
                     SettingsLabel {
                         visible: axes.showX
                         text: axes.onAxes ? "X-axis" : axes.kind === "heatmap" ? "Rows" : "Labels"
@@ -7585,14 +7765,14 @@ ApplicationWindow {
                         width: parent.width
                         spacing: 6
                         Repeater {
-                            model: ["basic", "straight", "quadratic", "bezier"]
+                            model: ["none", "straight", "quadratic", "bezier"]
                             SettingsChip {
                                 required property string modelData
                                 readonly property string fit: win.plotInfo.controls.fit || ""
                                 text: modelData.charAt(0).toUpperCase() + modelData.slice(1)
-                                // Left unsaid, a line is bezier and any other plot is basic.
-                                readonly property string shown: fit === "true" ? "straight" : fit === "false" ? "basic"
-                                    : fit !== "" ? fit : axes.kind === "line" ? "bezier" : "basic"
+                                // Left unsaid, a line is bezier and any other plot is none.
+                                readonly property string shown: fit === "true" ? "straight" : fit === "false" ? "none"
+                                    : fit !== "" ? fit : axes.kind === "line" ? "bezier" : "none"
                                 on: shown === modelData
                                 onClicked: win.setPlot("fit", modelData)
                             }
@@ -7605,7 +7785,7 @@ ApplicationWindow {
                     width: parent.width
                     spacing: 6
                     SettingsLabel {
-                        visible: axes.labelsOk || ["line", "bar", "area", "stacked", "step", "scatter", "histogram", "candle"].indexOf(axes.kind) >= 0
+                        visible: axes.labelsOk || ["line", "bar", "hbar", "hstacked", "area", "stacked", "step", "scatter", "histogram", "candle"].indexOf(axes.kind) >= 0
                         text: "Options"
                     }
                     Flow {
@@ -7618,7 +7798,7 @@ ApplicationWindow {
                             text: "Coordinates"
                         }
                         SettingsCheck {
-                            visible: ["line", "bar", "area", "stacked", "step", "scatter", "histogram"].indexOf(axes.kind) >= 0
+                            visible: ["line", "bar", "hbar", "hstacked", "area", "stacked", "step", "scatter", "histogram"].indexOf(axes.kind) >= 0
                             flag: "legend"
                             automatic: axes.current.length > 1 ? 1 : 0
                             text: "Legend"
@@ -8090,6 +8270,26 @@ ApplicationWindow {
     }
 
     // A gear, in one ink: eight teeth round a hole.
+    // A window in small, the part the settings take filled in: its right side,
+    // or its foot.
+    component PlaceGlyph: Rectangle {
+        property bool below: false
+        property color ink: win.mutedColor
+        width: Math.round(win.fontSize * 1.15)
+        height: Math.round(win.fontSize * 0.95)
+        radius: 2
+        color: "transparent"
+        border.width: 1
+        border.color: ink
+        Rectangle {
+            x: parent.below ? 2 : parent.width - width - 2
+            y: parent.below ? parent.height - height - 2 : 2
+            width: parent.below ? parent.width - 4 : Math.round(parent.width * 0.35)
+            height: parent.below ? Math.round(parent.height * 0.35) : parent.height - 4
+            color: parent.ink
+        }
+    }
+
     component GearIcon: Canvas {
         id: gear
         property color ink: win.textColor
@@ -8236,6 +8436,14 @@ ApplicationWindow {
                 for (var r = 0; r < 3; r++)
                     for (var q = 0; q < 3; q++)
                         box(0.1 + q * 0.29, 0.08 + r * 0.29, 0.26, 0.26, 0.15 + 0.4 * ((r * 2 + q * 3) % 5) / 4 + 0.3 * (r === q ? 1 : 0));
+                break;
+            case "hbar":
+                box(0.08, 0.08, 0.86, 0.22, 0.9); box(0.08, 0.39, 0.62, 0.22, 0.9); box(0.08, 0.7, 0.4, 0.22, 0.9);
+                break;
+            case "hstacked":
+                box(0.08, 0.08, 0.5, 0.22, 0.95); box(0.58, 0.08, 0.36, 0.22, 0.45);
+                box(0.08, 0.39, 0.36, 0.22, 0.95); box(0.44, 0.39, 0.28, 0.22, 0.45);
+                box(0.08, 0.7, 0.24, 0.22, 0.95); box(0.32, 0.7, 0.18, 0.22, 0.45);
                 break;
             case "waterfall":
                 box(0.06, 0.5, 0.17, 0.45, 0.9); box(0.29, 0.15, 0.17, 0.35, 0.9); box(0.52, 0.15, 0.17, 0.25, 0.45); box(0.75, 0.4, 0.17, 0.55, 0.9);
@@ -8492,6 +8700,8 @@ ApplicationWindow {
         property bool quiet: false
         // Three bars drawn in place of the label: a chart, for the plot pane.
         property bool bars: false
+        // The bars in the accent colour, open or not: there is a plot to see.
+        property bool lit: false
         property color textColor: win.textColor
         // Said in the footer while the pointer is on it, where there is anything to say.
         property string tip: ""
@@ -8534,7 +8744,7 @@ ApplicationWindow {
                     height: Math.round(win.fontSize * modelData)
                     y: Math.round(win.fontSize * (0.95 - modelData))
                     radius: 1
-                    color: button.active ? win.accentColor : button.quiet ? win.mutedColor : button.textColor
+                    color: button.active || button.lit ? win.accentColor : button.quiet ? win.mutedColor : button.textColor
                 }
             }
         }
@@ -11379,6 +11589,42 @@ ApplicationWindow {
 
     Dialog {
         font.pixelSize: win.dialogSize
+        id: unitsDialog
+        anchors.centerIn: parent
+        modal: true
+        width: 440
+        focus: true
+        title: "Units"
+        standardButtons: Dialog.Yes | Dialog.No
+        property string question: ""
+        function ask(text) {
+            question = text;
+            open();
+        }
+        // Each button names its key.
+        Component.onCompleted: {
+            standardButton(Dialog.Yes).text = "Yes    Y";
+            standardButton(Dialog.No).text = "No    N";
+        }
+        Shortcut { sequence: "Y"; enabled: unitsDialog.visible; onActivated: unitsDialog.accept() }
+        Shortcut { sequence: "Return"; enabled: unitsDialog.visible; onActivated: unitsDialog.accept() }
+        Shortcut { sequence: "N"; enabled: unitsDialog.visible; onActivated: unitsDialog.reject() }
+        Label {
+            width: parent.width
+            text: unitsDialog.question
+            textFormat: Text.PlainText
+            wrapMode: Text.Wrap
+            font.family: win.font.family
+            font.features: win.font.features
+            font.pixelSize: win.dialogSize
+        }
+        onAccepted: file.rewriteUnits(win.tab)
+        // Back to a Set box still open, or else the sheet.
+        onClosed: win.metaClosed()
+    }
+
+    Dialog {
+        font.pixelSize: win.dialogSize
         id: clearStylesDialog
         anchors.centerIn: parent
         modal: true
@@ -11826,7 +12072,7 @@ ApplicationWindow {
                 property string value: "line"
                 spacing: 4
                 Repeater {
-                    model: ["line", "bar", "pie", "candle", "scatter", "area", "stacked", "step", "histogram", "box", "heatmap", "waterfall", "bubble", "donut"]
+                    model: ["line", "bar", "pie", "candle", "scatter", "area", "stacked", "step", "histogram", "box", "heatmap", "waterfall", "bubble", "donut", "hbar", "hstacked"]
                     RadioButton {
                         required property string modelData
                         text: modelData

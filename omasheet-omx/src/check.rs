@@ -1589,10 +1589,18 @@ impl<'a> Checker<'a> {
     /// How many rows sheet `t` has, if the check can know: a file's rows
     /// are not counted until it is read, so a row by number is checked
     /// against them then, not here.
+    /// The rows of sheet `t`, where the text says how many: not those of a
+    /// view, of a sheet calculated from an expression or of one of `:=`
+    /// lines alone, which are known only once it is worked out.
     fn known_rows(&self, t: usize) -> Option<usize> {
-        match self.sheets[t].source {
-            Some(_) => None,
-            None => Some(self.sheets[t].nrows),
+        let info = &self.sheets[t];
+        let calculated = self
+            .ast
+            .is_some_and(|a| a.sheets[info.decl].formula.is_some());
+        if info.source.is_some() || info.rowless || calculated {
+            None
+        } else {
+            Some(info.nrows)
         }
     }
 

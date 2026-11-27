@@ -14,6 +14,7 @@ use crate::Options;
 use crate::datefmt::Names;
 use crate::eval::Engine;
 use crate::table::Copying;
+use crate::unitcells::{self, Meaning};
 use crate::value::{Value, arith, delocalised, format_exact, format_styled};
 use omasheet_omx::ast::{BinOp, Expr, ExprKind, Lit, UnOp};
 use omasheet_omx::colfmt::{DurationStyle, Format, closing};
@@ -292,6 +293,9 @@ pub struct ToHold {
 
 pub struct Document {
     text: String,
+    /// The cells the last change of a column's type, unit or format leaves
+    /// to be rewritten, if the user says so.
+    offer: Option<UnitOffer>,
     snapshot: Snapshot,
     undo: Vec<Step>,
     redo: Vec<Step>,
@@ -2306,6 +2310,16 @@ fn aligned(text: &str) -> String {
     out
 }
 
+/// Cells to be rewritten after a column of quantities is declared or its
+/// unit changes.
+struct UnitOffer {
+    /// The text it was worked out for: it lapses once that changes.
+    text: String,
+    sheet: usize,
+    cells: Vec<(usize, usize, String)>,
+    question: String,
+}
+
 /// `text` with the format of type line `l` set to `format`, or taken off.
 fn reformatted(text: &str, l: &SchemaLine, format: Option<&Format>) -> String {
     let end = l.span.end as usize;
@@ -2790,6 +2804,7 @@ impl Document {
         let mut doc = Document {
             text: text.to_string(),
             snapshot: Snapshot::default(),
+            offer: None,
             undo: Vec::new(),
             redo: Vec::new(),
             style,
@@ -4035,7 +4050,99 @@ impl Document {
                 text = reformatted(&text, line, format.as_ref());
             }
         }
-        self.commit(text)
+        let before = self.text.clone();
+        let changed = self.commit(text);
+        self.offer_units(&before, sheet, &names);
+        changed
+    }
+
+    /// Work out what to ask of the cells of columns `names`, whose sheet's
+    /// text was `before`: see [`Document::unit_question`].
+    fn offer_units(&mut self, before: &str, sheet: usize, names: &[String]) {
+        self.offer = None;
+        if before == self.text || self.no_cells(sheet).is_some() {
+            return;
+        }
+        let (old, new) = (parse_file(before, 0, &mut Vec::new()), self.ast());
+        let (Some(was), Some(is)) = (self.sheet_decl(&old, sheet), self.sheet_decl(&new, sheet))
+        else {
+            return;
+        };
+        let mut found = Vec::new();
+        let mut units: Vec<String> = Vec::new();
+        for name in names {
+            let Some(col) = is.header.iter().position(|(n, _)| n == name) else {
+                continue;
+            };
+            let Some(to) = Meaning::of(is, name) else {
+                continue;
+            };
+            let from = Meaning::of(was, name);
+            // Said no once, it is not asked again for a change of the look.
+            if from.as_ref() == Some(&to) {
+                continue;
+            }
+            let cells = unitcells::rewrites(is, col, from.as_ref(), &to);
+            if cells.iter().any(|c| c.converts) && !units.contains(&to.said()) {
+                units.push(to.said());
+            }
+            found.extend(cells);
+        }
+        let mut question = Vec::new();
+        for converts in [true, false] {
+            let mut these = found.iter().filter(|c| c.converts == converts);
+            let Some(first) = these.next() else {
+                continue;
+            };
+            let n = 1 + these.count();
+            let cells = if n == 1 { "cell" } else { "cells" };
+            let what = if converts {
+                format!("Convert {n} {cells} to {}, keeping what they stand for?", units.join(", "))
+            } else {
+                format!("Remove units from {n} {cells}?")
+            };
+            let now = CellStyle::strip(&first.now).1;
+            question.push(format!("{what}\n{}  \u{2192}  {now}", first.was));
+        }
+        if question.is_empty() {
+            return;
+        }
+        self.offer = Some(UnitOffer {
+            text: self.text.clone(),
+            sheet,
+            cells: found.into_iter().map(|c| (c.row, c.col, c.now)).collect(),
+            question: question.join("\n\n"),
+        });
+    }
+
+    /// What to ask, yes or no, of the cells the last change of a column's
+    /// type, unit or format leaves behind: units to take off, and bare
+    /// numbers to convert. `None` where there is nothing to ask.
+    pub fn unit_question(&self) -> Option<&str> {
+        let offer = self.offer.as_ref().filter(|o| o.text == self.text)?;
+        Some(&offer.question)
+    }
+
+    /// Rewrite those cells. It is undone in one step with the change that
+    /// led to it.
+    pub fn rewrite_units(&mut self) -> bool {
+        let Some(offer) = self.offer.take().filter(|o| o.text == self.text) else {
+            return false;
+        };
+        let cells = offer.cells;
+        let Some(text) = self.grid_edited(&self.text, offer.sheet, |grid| {
+            for (row, col, now) in &cells {
+                if let Some(slot) = grid.rows.get_mut(*row).and_then(|r| r.1.get_mut(*col)) {
+                    slot.clone_from(now);
+                }
+            }
+        }) else {
+            return false;
+        };
+        let steps = self.undo.len();
+        let changed = self.commit(text);
+        self.undo.truncate(steps);
+        changed
     }
 
     /// Show the values of columns `cols` of a sheet by `format`, `'.2f` or
@@ -4078,7 +4185,10 @@ impl Document {
             let line = line.ok_or_else(String::new)?;
             text = reformatted(&text, line, format.as_ref());
         }
+        let before = self.text.clone();
         self.commit(text);
+        let names: Vec<String> = columns.into_iter().map(|c| c.0).collect();
+        self.offer_units(&before, sheet, &names);
         Ok(())
     }
 
@@ -5677,6 +5787,17 @@ impl Document {
             .unwrap_or_default()
     }
 
+    /// Which of those columns the plot shows.
+    pub fn plot_drawn_columns(&self, name: &str) -> Vec<String> {
+        let Some(engine) = self.engine.as_ref() else {
+            return Vec::new();
+        };
+        let program = engine.program();
+        crate::plot::find(program, name)
+            .map(|p| crate::plot::drawn_columns(engine, program, p))
+            .unwrap_or_default()
+    }
+
     /// Which of those columns hold numbers, for a plot's values.
     pub fn plot_numeric_columns(&self, name: &str) -> Vec<String> {
         let Some(engine) = self.engine.as_ref() else {
@@ -6735,6 +6856,55 @@ mod tests {
             ),
             ["+01:00:30", "+01:30:05", "P365D", "17:05:10"]
         );
+    }
+
+    #[test]
+    fn a_row_of_a_calculated_sheet_is_picked_by_number() {
+        let doc = Document::from_text(
+            "sheet T\n\n| N | A |\n| - | - |\n| a | 1 |\n| b | 3 |\n\n\
+             sheet S := T |> filter(A > 2)\n\nsheet P\n\n| V |\n| - |\n| = S[N; 0] |\n",
+        );
+        assert_eq!(col(&doc, 2, 0), ["b"]);
+    }
+
+    #[test]
+    fn cells_are_offered_the_columns_unit() {
+        let cells = |doc: &Document| col(doc, 0, 0);
+        let src = "sheet T\n\n| A |\n| - |\n| 2kg |\n| 300g |\n| 5 |\n";
+        let mut doc = Document::from_text(src);
+        assert!(doc.set_column_types(0, &[0], Some("Mass")));
+        let asked = doc.unit_question().expect("asked").to_string();
+        assert!(asked.starts_with("Remove units from 2 cells?"), "{asked}");
+        let shown = cells(&doc);
+        assert!(doc.rewrite_units());
+        assert!(doc.text().contains("| 0.3 "), "{}", doc.text());
+        assert_eq!(cells(&doc), shown);
+        // One step takes both back.
+        assert!(doc.undo());
+        assert_eq!(doc.text(), src);
+
+        // A new unit: bare numbers are converted, so as to stay the same.
+        let mut doc = Document::from_text("sheet T\n\nA : Mass\n\n| A |\n| - |\n| 2 |\n| 0.5 |\n");
+        doc.set_column_format(0, &[0], Some("g")).unwrap();
+        assert!(doc.unit_question().unwrap().starts_with("Convert 2 cells to g"));
+        assert!(doc.rewrite_units());
+        assert!(doc.text().contains("| 2000 |") && doc.text().contains("| 500 "), "{}", doc.text());
+        // Where that cannot be exact, the old unit is written.
+        doc.set_column_format(0, &[0], Some("lb")).unwrap();
+        assert!(doc.rewrite_units());
+        assert!(doc.text().contains("| 2000g "), "{}", doc.text());
+        // A change of the look alone asks nothing.
+        doc.set_column_format(0, &[0], Some("lb; .2f")).unwrap();
+        assert_eq!(doc.unit_question(), None);
+
+        // Pence, and money of another kind, which is left.
+        let mut doc = Document::from_text(
+            "sheet T\n\n| A |\n| - |\n| 0.245GBP.kWh^-1 |\n| 0.2EUR.kWh^-1 |\n",
+        );
+        doc.set_column_types(0, &[0], Some("Quantity[GBP.kWh^-1; $p.1f]"));
+        assert!(doc.rewrite_units());
+        assert!(doc.text().contains("| 24.5 "), "{}", doc.text());
+        assert!(doc.text().contains("| 0.2EUR.kWh^-1 |"), "{}", doc.text());
     }
 
     #[test]

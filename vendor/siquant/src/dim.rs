@@ -3,13 +3,15 @@
 //! Base dimensions and the exponent vector over them.
 //!
 //! The slot layout is fixed here, in code, and never inferred from a resource
-//! file: `L M T I Θ N J A $ D`. Angle (`A`) is used from Stage 3, Currency
-//! (`$`) is reserved, and Data (`D`) is used from Stage 2.
+//! file: `L M T I Θ N J A $ D K F O X`. Angle (`A`) is used from Stage 3, Currency
+//! (`$`) is reserved, and Data (`D`) is used from Stage 2. Tokens, floating
+//! point operations, other operations and pixels are counted apart, each a
+//! dimension of its own, so that one is not added to another.
 
 use std::fmt;
 
 /// How many base dimensions there are.
-pub const NUM_BASES: usize = 10;
+pub const NUM_BASES: usize = 14;
 
 /// A base dimension; its discriminant is its slot in a [`Dim`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -24,6 +26,10 @@ pub enum Base {
     Angle = 7,
     Currency = 8,
     Data = 9,
+    Token = 10,
+    Flop = 11,
+    Operation = 12,
+    Pixel = 13,
 }
 
 impl Base {
@@ -39,6 +45,10 @@ impl Base {
         Base::Angle,
         Base::Currency,
         Base::Data,
+        Base::Token,
+        Base::Flop,
+        Base::Operation,
+        Base::Pixel,
     ];
 
     /// Its slot in a [`Dim`].
@@ -59,6 +69,10 @@ impl Base {
             Base::Angle => "Angle",
             Base::Currency => "Currency",
             Base::Data => "Data",
+            Base::Token => "Token",
+            Base::Flop => "Flop",
+            Base::Operation => "Operation",
+            Base::Pixel => "Pixel",
         }
     }
 
@@ -75,6 +89,10 @@ impl Base {
             Base::Angle => "A",
             Base::Currency => "$",
             Base::Data => "D",
+            Base::Token => "K",
+            Base::Flop => "F",
+            Base::Operation => "O",
+            Base::Pixel => "X",
         }
     }
 

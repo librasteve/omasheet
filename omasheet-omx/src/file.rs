@@ -51,14 +51,14 @@ pub const PLOT_PALETTES: [&str; 7] = ["classic", "vivid", "pastel", "earth", "co
 
 /// What `fit` may be: a kind of curve fitted to the values, or `true` for
 /// the first, or `false` for none.
-pub const PLOT_FITS: &str = "basic, straight, quadratic or bezier";
+pub const PLOT_FITS: &str = "none, straight, quadratic or bezier";
 
-/// The curve `value` of `fit` names: `basic` is the points joined by straight
+/// The curve `value` of `fit` names: `none` is the points joined by straight
 /// segments, with no fit, and `false` says the same. A line plot left to
-/// itself is `bezier`; any other, `basic`.
+/// itself is `bezier`; any other, `none`.
 pub fn fit_kind(value: &str) -> Option<&'static str> {
     match value {
-        "false" | "basic" => Some("basic"),
+        "false" | "none" => Some("none"),
         "true" | "straight" => Some("straight"),
         "quadratic" => Some("quadratic"),
         "bezier" => Some("bezier"),
@@ -82,7 +82,7 @@ pub fn axis_flag(value: &str) -> Option<(bool, bool)> {
 }
 
 /// The kinds of plot.
-pub const PLOT_KINDS: &str = "line, bar, pie, candle, scatter, area, stacked, step, histogram, box, heatmap, waterfall, bubble, donut";
+pub const PLOT_KINDS: &str = "line, bar, pie, candle, scatter, area, stacked, step, histogram, box, heatmap, waterfall, bubble, donut, hbar, hstacked";
 
 /// `plot <Name>` and its `key: value` lines, to the next blank line.
 #[derive(Debug)]

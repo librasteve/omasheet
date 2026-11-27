@@ -1,7 +1,8 @@
 // Copyright (c) 2026 Stephen Roe
 
 //! Plots of sheet data as SVG: line, bar, pie, candlestick, scatter, area,
-//! stacked bars, steps, histogram, box, heatmap, waterfall, bubble and donut.
+//! stacked bars, steps, histogram, box, heatmap, waterfall, bubble, donut, and
+//! horizontal bars, side by side or stacked.
 //!
 //! The marks (lines, bars, candles, error bars) are drawn by `plotters`, in
 //! the data's own coordinates. Everything with text in it (the axes' labels,
@@ -43,10 +44,14 @@ pub enum Kind {
     Bubble,
     /// A pie with a hole.
     Donut,
+    /// Bars from left to right, the labels down the side.
+    Hbar,
+    /// The same, with the bars of a row one after another.
+    Hstacked,
 }
 
 impl Kind {
-    pub const NAMES: &'static str = "line, bar, pie, candle, scatter, area, stacked, step, histogram, box, heatmap, waterfall, bubble, donut";
+    pub const NAMES: &'static str = "line, bar, pie, candle, scatter, area, stacked, step, histogram, box, heatmap, waterfall, bubble, donut, hbar, hstacked";
 
     pub fn parse(name: &str) -> Option<Kind> {
         Some(match name {
@@ -64,6 +69,8 @@ impl Kind {
             "waterfall" => Kind::Waterfall,
             "bubble" => Kind::Bubble,
             "donut" => Kind::Donut,
+            "hbar" => Kind::Hbar,
+            "hstacked" => Kind::Hstacked,
             _ => return None,
         })
     }
@@ -361,6 +368,7 @@ pub fn render_hits(spec: &Spec, table: &Table) -> Result<(String, Vec<Hit>), Str
             Kind::Pie => pie(spec, table, 0.0, &mut text)?,
             Kind::Donut => pie(spec, table, 0.55, &mut text)?,
             Kind::Heatmap => heatmap(spec, table, &mut text, &mut hits)?,
+            Kind::Hbar | Kind::Hstacked => hbar(spec, table, &mut text, &mut hits)?,
             _ => {
                 let (table, logx, logy) = log_table(spec, table);
                 let mut prep = prepare(spec, &table)?;
@@ -1109,7 +1117,9 @@ fn cartesian(
                 }
             }
         }
-        Kind::Pie | Kind::Donut | Kind::Heatmap => unreachable!("not drawn on axes"),
+        Kind::Pie | Kind::Donut | Kind::Heatmap | Kind::Hbar | Kind::Hstacked => {
+            unreachable!("not drawn on axes")
+        }
     }
 
     // Where the marks are, for a click on one.
@@ -1624,6 +1634,201 @@ fn heatmap(spec: &Spec, table: &Table, text: &mut String, hits: &mut Vec<Hit>) -
     Ok(())
 }
 
+/// A bar from zero for each value, a group of them for each row, the first
+/// row at the top and its label at the left. Stacked, a row's values make one
+/// bar, each starting where the last ended, those below zero going left.
+fn hbar(spec: &Spec, table: &Table, text: &mut String, hits: &mut Vec<Hit>) -> Result<(), String> {
+    let stacked = spec.kind == Kind::Hstacked;
+    // The values and their uncertainties reach from zero; stacked, their sums.
+    let (mut lo, mut hi, mut any) = (0f64, 0f64, false);
+    for i in 0..table.labels.len() {
+        let (mut up, mut down) = (0.0, 0.0);
+        for s in &table.series {
+            let Some(v) = s.values.get(i).copied().flatten().filter(|v| v.is_finite()) else {
+                continue;
+            };
+            any = true;
+            if stacked {
+                if v >= 0.0 { up += v } else { down += v }
+                (lo, hi) = (lo.min(down), hi.max(up));
+            } else {
+                let sigma = s.sigma.get(i).copied().unwrap_or(0.0);
+                (lo, hi) = (lo.min(v - sigma), hi.max(v + sigma));
+            }
+        }
+    }
+    if !any {
+        return Err("there are no numbers to plot".to_string());
+    }
+    if hi <= lo {
+        hi = 1.0;
+    }
+    let (w, h) = (spec.width as f64, spec.height as f64);
+    let rows = table.labels.len();
+    let n = table.series.len();
+    let keyed = spec.legend.unwrap_or(n > 1);
+    let unit = if spec.units.y { common_unit(&table.series) } else { None };
+    // A value written at the end of its bar.
+    let written = |s: &Series, i: usize, v: f64| {
+        s.shown.get(i).filter(|t| !t.is_empty()).cloned().unwrap_or_else(|| short(v))
+    };
+    let mut room = 0f64;
+    // Stacked, a value is written inside its part of the bar.
+    if spec.labels.y && !stacked {
+        for s in &table.series {
+            for (i, v) in s.values.iter().enumerate() {
+                if let Some(v) = v {
+                    room = room.max(written(s, i, *v).chars().count() as f64 * 6.5 + 8.0);
+                }
+            }
+        }
+    }
+    let longest = table.labels.iter().map(|l| l.chars().count()).max().unwrap_or(1);
+    let left = (longest as f64 * 6.5 + 14.0).min(w * 0.45) + if lo < 0.0 { room } else { 0.0 };
+    let top = if keyed { 52.0 } else if spec.title.is_some() { 32.0 } else { 8.0 };
+    let bottom = if unit.is_some() { 38.0 } else { 24.0 };
+    let (pw, ph) = (w - left - room - 20.0, h - top - bottom);
+    let each = ph / rows as f64;
+    let bar = each * 0.8 / if stacked { 1.0 } else { n as f64 };
+    if pw < 20.0 || bar < 1.0 {
+        return Err("there is no room for so many bars: make the plot larger".to_string());
+    }
+    let (ticks, step) = nice_ticks(lo, hi, ((pw / 70.0) as usize).max(2));
+    let at = |v: f64| left + (v - lo) / (hi - lo) * pw;
+    for t in ticks {
+        let x = at(t);
+        let _ = writeln!(
+            text,
+            "<line x1=\"{x:.1}\" y1=\"{top:.1}\" x2=\"{x:.1}\" y2=\"{:.1}\" stroke=\"#000000\" stroke-opacity=\"0.15\"/>\n<text x=\"{x:.1}\" y=\"{:.1}\" text-anchor=\"middle\" opacity=\"0.75\">{}</text>",
+            top + ph,
+            top + ph + 16.0,
+            tick_text(t, step)
+        );
+        if spec.ticks.y {
+            let _ = writeln!(
+                text,
+                "<line x1=\"{x:.1}\" y1=\"{:.1}\" x2=\"{x:.1}\" y2=\"{:.1}\" stroke=\"#000000\"/>",
+                top + ph,
+                top + ph + 4.0
+            );
+        }
+    }
+    if spec.ticks.y {
+        let _ = writeln!(
+            text,
+            "<line x1=\"{left:.1}\" y1=\"{0:.1}\" x2=\"{1:.1}\" y2=\"{0:.1}\" stroke=\"#000000\"/>",
+            top + ph,
+            left + pw
+        );
+    }
+    // Labels too close to read are thinned.
+    let every = ((12.0 / each).ceil() as usize).max(1);
+    let zero = at(0.0);
+    for (i, label) in table.labels.iter().enumerate() {
+        let y = top + i as f64 * each;
+        if i % every == 0 {
+            let _ = writeln!(
+                text,
+                "<text x=\"{:.1}\" y=\"{:.1}\" text-anchor=\"end\">{}</text>",
+                left - if lo < 0.0 { room } else { 0.0 } - 6.0,
+                y + each / 2.0 + 4.0,
+                escape(label)
+            );
+        }
+        let (mut up, mut down) = (0.0, 0.0);
+        for (j, s) in table.series.iter().enumerate() {
+            let Some(v) = s.values.get(i).copied().flatten().filter(|v| v.is_finite()) else {
+                continue;
+            };
+            let by = y + each * 0.1 + if stacked { 0.0 } else { j as f64 * bar };
+            let (from, to) = if !stacked {
+                (0.0, v)
+            } else if v >= 0.0 {
+                up += v;
+                (up - v, up)
+            } else {
+                down += v;
+                (down - v, down)
+            };
+            let (x, bw) = (at(from).min(at(to)), (at(to) - at(from)).abs());
+            hits.push(Hit { x, y: by, w: bw.max(2.0), h: bar, row: i, series: j });
+            let _ = writeln!(
+                text,
+                "<rect x=\"{x:.1}\" y=\"{by:.1}\" width=\"{bw:.1}\" height=\"{bar:.1}\" fill=\"{}\"/>",
+                hex(j)
+            );
+            if stacked {
+                let value = written(s, i, v);
+                if spec.labels.y && bar >= 12.0 && bw >= value.chars().count() as f64 * 6.5 + 6.0 {
+                    let _ = writeln!(
+                        text,
+                        "<text x=\"{:.1}\" y=\"{:.1}\" text-anchor=\"middle\" font-size=\"11\" fill=\"#ffffff\">{}</text>",
+                        x + bw / 2.0,
+                        by + bar / 2.0 + 4.0,
+                        escape(&value)
+                    );
+                }
+                continue;
+            }
+            let sigma = s.sigma.get(i).copied().unwrap_or(0.0);
+            let mid = by + bar / 2.0;
+            if sigma > 0.0 {
+                let (a, b, cap) = (at(v - sigma), at(v + sigma), (bar / 4.0).min(4.0));
+                let _ = writeln!(
+                    text,
+                    "<path d=\"M{a:.1},{mid:.1} H{b:.1} M{a:.1},{0:.1} V{1:.1} M{b:.1},{0:.1} V{1:.1}\" stroke=\"#000000\" fill=\"none\"/>",
+                    mid - cap,
+                    mid + cap
+                );
+            }
+            if spec.labels.y && bar >= 8.0 {
+                let (end, anchor) = if v < 0.0 {
+                    (at(v - sigma) - 4.0, "end")
+                } else {
+                    (at(v + sigma) + 4.0, "start")
+                };
+                let _ = writeln!(
+                    text,
+                    "<text x=\"{end:.1}\" y=\"{:.1}\" text-anchor=\"{anchor}\" font-size=\"{}\">{}</text>",
+                    mid + 3.5,
+                    if bar >= 12.0 { 11 } else { 9 },
+                    escape(&written(s, i, v))
+                );
+            }
+        }
+    }
+    let _ = writeln!(
+        text,
+        "<line x1=\"{zero:.1}\" y1=\"{top:.1}\" x2=\"{zero:.1}\" y2=\"{:.1}\" stroke=\"#000000\" stroke-opacity=\"0.5\"/>",
+        top + ph
+    );
+    if let Some(unit) = &unit {
+        let _ = writeln!(
+            text,
+            "<text x=\"{:.1}\" y=\"{:.1}\" text-anchor=\"middle\" opacity=\"0.75\">{}</text>",
+            left + pw / 2.0,
+            h - 6.0,
+            escape(unit)
+        );
+    }
+    if keyed {
+        let names: Vec<(String, String)> = table
+            .series
+            .iter()
+            .enumerate()
+            .map(|(j, s)| {
+                let name = match &s.unit {
+                    Some(u) if spec.units.y => format!("{} [{u}]", s.name),
+                    _ => s.name.clone(),
+                };
+                (name, hex(j))
+            })
+            .collect();
+        legend(&names, w, text);
+    }
+    Ok(())
+}
+
 fn pie(spec: &Spec, table: &Table, hole: f64, text: &mut String) -> Result<(), String> {
     let s = &table.series[0];
     let items: Vec<(&str, f64)> = table
@@ -1878,5 +2083,32 @@ mod tests {
         t.series.truncate(1);
         let s = svg(Kind::Donut, &t);
         assert_eq!(s.matches("<path").count(), 3);
+    }
+
+    #[test]
+    fn hstacked_is_one_bar_for_each_label() {
+        let (_, hits) = render_hits(&Spec::new(Kind::Hstacked), &table()).unwrap();
+        let first: Vec<&Hit> = hits.iter().filter(|h| h.row == 0).collect();
+        assert!(first.len() > 1);
+        assert_eq!(first[0].y, first[1].y);
+        assert!((first[0].x + first[0].w - first[1].x).abs() < 1e-6);
+    }
+
+    #[test]
+    fn hbar_is_a_row_of_bars_for_each_label() {
+        let (s, hits) = render_hits(&Spec::new(Kind::Hbar), &table()).unwrap();
+        // Five values, and two legend swatches.
+        assert_eq!(s.matches("<rect").count(), 5 + 2, "{s}");
+        // Down the side: the rows in order, and the longer bar the larger value.
+        assert!(hits[0].y < hits[2].y && hits[0].w > hits[1].w, "{hits:?}");
+        let mut spec = Spec::new(Kind::Hbar);
+        spec.labels.y = true;
+        let mut t = table();
+        t.series[0].values[0] = Some(-25.0);
+        let s = render(&spec, &t).unwrap();
+        assert!(s.contains(">-25<"), "{s}");
+        spec.height = 90;
+        t.labels = vec!["a".into(); 200];
+        assert!(render(&spec, &t).is_err());
     }
 }

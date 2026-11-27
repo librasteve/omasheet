@@ -56,6 +56,20 @@
 # 1024 B); rates need no entry of their own: `kb.s^-1`, `MiB.s^-1`.
 - {symbol: b, name: bit,  base: Data, prefixable: both}
 - {symbol: B, name: byte, defn: b, factor: "8", prefixable: both}
+# Bits a second, as networks write it: `Gbps` is `Gb.s^-1`.
+- {symbol: bps, name: bit per second, defn: "b.s^-1", prefixable: both}
+
+# Computing. What is counted, a token, a floating point operation, any other
+# operation and a pixel, is each a base unit of its own dimension. `FLOPS` and
+# `OPS` are the rates, `TFLOPS` and `TOPS`; `IOPS` is the same rate as `OPS`,
+# said of storage.
+- {symbol: tok,   name: token,                    base: Token,     prefixable: si}
+- {symbol: flop,  name: floating point operation, base: Flop,      prefixable: si}
+- {symbol: op,    name: operation,                base: Operation, prefixable: si}
+- {symbol: px,    name: pixel,                    base: Pixel,     prefixable: si}
+- {symbol: FLOPS, name: flop per second,          defn: "flop.s^-1", prefixable: si}
+- {symbol: OPS,   name: operation per second,     defn: "op.s^-1",   prefixable: si}
+- {symbol: IOPS,  name: I/O operation per second, defn: "op.s^-1",   prefixable: si}
 
 # Angles (Stage 3). The radian is the base unit of the angle dimension, so a
 # frequency (`s^-1`) and an angular speed (`rad.s^-1`) are not the same thing,
@@ -72,6 +86,9 @@
 # Luminous flux and illuminance (Stage 3): the lumen and the lux need the steradian.
 - {symbol: lm,  name: lumen,     defn: "cd.sr",    prefixable: si}
 - {symbol: lx,  name: lux,       defn: "cd.sr.m^-2", prefixable: si}
+# The nit, a candela per square metre: what a screen's brightness is given in. It takes
+# no prefix: `unit` would be a micronit.
+- {symbol: nit, name: nit,       defn: "cd.m^-2"}
 
 # Non-SI units for the metric stage (omasheet): each an exact multiple of an
 # SI unit, none of the imperial ones. `L` is the other spelling of the litre.

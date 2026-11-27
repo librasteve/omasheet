@@ -53,17 +53,17 @@ legend: false
 
 sheet Rates
 
-// A price for each kWh, kept in pounds and shown in pence in each row: `$p`
-// is the sign form of a hundredth of the pound.
+// A price for each kWh in pence: a bare number is read as pence, and `$p`
+// shows it so in each row, while formulas have it in pounds.
 Cost : Quantity[GBP.kWh^-1; $p.1f]
 
 | Supplier | Cost            |
 | -------- | --------------- |
-| Octopus  | 0.245GBP.kWh^-1 |
-| British  | 0.272GBP.kWh^-1 |
-| EDF      | 0.263GBP.kWh^-1 |
-| Ovo      | 0.281GBP.kWh^-1 |
-| Shell    | 0.259GBP.kWh^-1 |
+| Octopus  | 24.5            |
+| British  | 27.2            |
+| EDF      | 26.3            |
+| Ovo      | 28.1            |
+| Shell    | 25.9            |
 
 plot UnitRate
 type: bar

@@ -26,6 +26,7 @@ pub fn string(out: &mut String, s: &str) {
 pub fn plot_info(
     controls: &[(String, String)],
     columns: &[String],
+    drawn: &[String],
     numeric: &[String],
     unit_cols: &[String],
     fit: &[(String, String)],
@@ -40,6 +41,8 @@ pub fn plot_info(
     }
     out.push_str("},\"columns\":");
     out.push_str(&strings(columns));
+    out.push_str(",\"drawn\":");
+    out.push_str(&strings(drawn));
     out.push_str(",\"numeric\":");
     out.push_str(&strings(numeric));
     out.push_str(",\"unitCols\":");

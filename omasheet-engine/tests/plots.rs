@@ -164,11 +164,24 @@ fn a_click_on_a_mark_finds_its_cell() {
 fn a_kind_the_data_does_not_suit_says_why() {
     let doc = doc();
     let fit = doc.plot_fit("Trend");
-    assert_eq!(fit.len(), 14);
+    assert_eq!(fit.len(), 16);
     let why = |kind: &str| fit.iter().find(|(k, _)| k == kind).unwrap().1.clone();
     assert_eq!(why("line"), "");
     assert_eq!(why("bar"), "");
     // The labels are months, not numbers.
     assert!(why("scatter").contains("numbers in `x`"), "{}", why("scatter"));
     assert!(why("candle").contains("one uncertain column"), "{}", why("candle"));
+}
+
+#[test]
+fn the_columns_a_plot_shows_are_those_its_kind_draws() {
+    let mut doc = doc();
+    assert_eq!(doc.plot_drawn_columns("Trend"), ["Revenue", "Cost", "Month"]);
+    doc.set_plot_control("Trend", "y", Some("Cost")).unwrap();
+    assert_eq!(doc.plot_drawn_columns("Trend"), ["Cost", "Month"]);
+    doc.set_plot_control("Trend", "y", None).unwrap();
+    doc.set_plot_control("Trend", "type", Some("pie")).unwrap();
+    assert_eq!(doc.plot_drawn_columns("Trend"), ["Revenue", "Month"]);
+    doc.set_plot_control("Trend", "type", Some("box")).unwrap();
+    assert_eq!(doc.plot_drawn_columns("Trend"), ["Revenue", "Cost"]);
 }

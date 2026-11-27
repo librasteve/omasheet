@@ -1,0 +1,302 @@
+// Building a custom PC: which graphics card and processor give the most for
+// the money? US prices in dollars, as found on 27 November 2026.
+//
+// GPU scores: Tom's Hardware native raster, Ultra, as a share of the RTX 5090
+// (via techfuelhq.com/articles/gpu-hierarchy-2026, checked 18 Nov 2026).
+// GPU prices: lowest in-stock US listing, Tom's price index of 25 Nov 2026
+// (via shanethegamer.com/research/gpu-price). The RX 9070 GRE has no US list
+// price. Board and processor power are the makers' rated figures.
+// CPU gaming: Tom's Hardware 1080p index, 9850X3D = 100%
+// (via techfuelhq.com/articles/cpu-hierarchy-2026).
+// CPU multi-core: Cinebench 2026 (topcpu.net). CPU prices: Newegg, 17 Nov 2026.
+// Prices move daily: check them before buying.
+
+// The RTX 5090's average frame rate, which the GPU scores are shares of.
+const Top1080 = 203.8Hz
+const Top1440 = 167.3Hz
+const Top4K = 110.8Hz
+
+// The slowest 1440p frame rate worth buying.
+const TargetFps = 90Hz
+
+// The pixels in one frame at each resolution.
+const Res1440 = 2560 * 1440px
+const Res4K = 3840 * 2160px
+
+sheet Gpu
+
+// Memory is counted in binary units: a "16GB" card holds 16GiB.
+Vram       : Data[GiB]
+Power      : Power[W]
+Msrp       : Currency[USD; $.0f]
+Price      : Currency[USD; $.0f]
+Raster1080 : Percent[.1f]
+Raster1440 : Percent[.1f]
+Raster4K   : Percent[.1f]
+Fps1080    : Frequency[Hz; .0f]
+Fps1440    : Frequency[Hz; .0f]
+Fps4K      : Frequency[Hz; .0f]
+Value1440  : Frequency[Hz; .2f]
+Value4K    : Frequency[Hz; .2f]
+Pixels1440 : Quantity[Mpx.s^-1; .0f]
+Pixels4K   : Quantity[Mpx.s^-1; .0f]
+Markup     : Percent[.0f]
+PerJoule   : Quantity[Mpx.J^-1; .2f]
+
+| Card             | Vram | Power | Msrp | Price | Raster1080 | Raster1440 | Raster4K | Fps1080 | Fps1440 | Fps4K | Value1440 | Value4K | Pixels1440 | Pixels4K | Markup | PerJoule |
+| ---------------- | ---- | ----- | ---- | ----- | ---------- | ---------- | -------- | ------- | ------- | ----- | --------- | ------- | ---------- | -------- | ------ | -------- |
+| RTX 5090         | 32   | 575   | 1999 | 6599  | 100.0%     | 100.0%     | 100.0%   | *       | *       | *     | *         | *       | *          | *        | *      | *        |
+| RTX 5080         | 16   | 360   | 999  | 1999  | 81.9%      | 76.7%      | 69.8%    | *       | *       | *     | *         | *       | *          | *        | *      | *        |
+| RTX 5070 Ti      | 16   | 300   | 749  | 1400  | 76.2%      | 69.8%      | 61.9%    | *       | *       | *     | *         | *       | *          | *        | *      | *        |
+| RTX 5070         | 12   | 250   | 549  | 899   | 65.1%      | 57.6%      | 49.0%    | *       | *       | *     | *         | *       | *          | *        | *      | *        |
+| RTX 5060 Ti 16GB | 16   | 180   | 429  | 799   | 51.6%      | 43.9%      | 36.3%    | *       | *       | *     | *         | *       | *          | *        | *      | *        |
+| RTX 5060 Ti 8GB  | 8    | 180   | 379  | 499   | 49.3%      | 41.0%      | 25.4%    | *       | *       | *     | *         | *       | *          | *        | *      | *        |
+| RTX 5060         | 8    | 145   | 299  | 449   | 43.4%      | 35.8%      | 19.6%    | *       | *       | *     | *         | *       | *          | *        | *      | *        |
+| RTX 5050         | 8    | 130   | 249  | 419   | 34.0%      | 27.1%      | 15.4%    | *       | *       | *     | *         | *       | *          | *        | *      | *        |
+| RX 9070 XT       | 16   | 304   | 599  | 999   | 76.9%      | 69.7%      | 59.4%    | *       | *       | *     | *         | *       | *          | *        | *      | *        |
+| RX 9070          | 16   | 220   | 549  | 898   | 69.1%      | 62.1%      | 52.1%    | *       | *       | *     | *         | *       | *          | *        | *      | *        |
+| RX 9070 GRE      | 12   | 220   |      | 729   | 59.2%      | 51.8%      | 41.8%    | *       | *       | *     | *         | *       | *          | *        | *      | *        |
+| RX 9060 XT 16GB  | 16   | 160   | 349  | 719   | 48.2%      | 40.2%      | 31.7%    | *       | *       | *     | *         | *       | *          | *        | *      | *        |
+| RX 9060 XT 8GB   | 8    | 150   | 299  | 539   | 45.7%      | 37.3%      | 26.8%    | *       | *       | *     | *         | *       | *          | *        | *      | *        |
+| Arc B580         | 12   | 190   | 249  | 494   | 35.1%      | 30.3%      | 24.9%    | *       | *       | *     | *         | *       | *          | *        | *      | *        |
+| Arc B570         | 10   | 150   | 219  | 289   | 31.1%      | 26.5%      | 17.7%    | *       | *       | *     | *         | *       | *          | *        | *      | *        |
+
+Fps1080 := Raster1080 * Top1080
+Fps1440 := Raster1440 * Top1440
+Fps4K   := Raster4K * Top4K
+// Frames a second for each $100 spent.
+Value1440 := Fps1440 * ($100 / Price)
+Value4K   := Fps4K * ($100 / Price)
+// How far the street price is above the list price.
+Markup     := (Price / Msrp - 1).Percent
+// Pixels drawn a second.
+Pixels1440 := Fps1440 * Res1440
+Pixels4K   := Fps4K * Res4K
+// Pixels at 1440p for each joule of board power.
+PerJoule   := Pixels1440 / Power
+
+sheet Cpu
+
+Power      : Power[W]
+Price      : Currency[USD; $]
+Gaming     : Percent[.1f]
+GameValue  : Decimal[2]
+MultiValue : Decimal[1]
+
+| Chip                   | Socket  | Cores | Threads | Power | Price  | Gaming | MultiCore | GameValue | MultiValue |
+| ---------------------- | ------- | ----- | ------- | ----- | ------ | ------ | --------- | --------- | ---------- |
+| Ryzen 7 9850X3D        | AM5     | 8     | 16      | 120   | 484.00 | 100.0% | 5698      | *         | *          |
+| Ryzen 7 9800X3D        | AM5     | 8     | 16      | 120   | 469.99 | 97.0%  | 5617      | *         | *          |
+| Ryzen 9 9950X3D        | AM5     | 16    | 32      | 170   | 699.00 | 95.7%  | 10343     | *         | *          |
+| Ryzen 7 7800X3D        | AM5     | 8     | 16      | 120   | 389.00 | 85.6%  | 4386      | *         | *          |
+| Ryzen 5 9600X          | AM5     | 6     | 12      | 65    | 219.00 | 72.6%  | 4122      | *         | *          |
+| Core i9-14900K         | LGA1700 | 24    | 32      | 125   | 539.99 | 78.2%  | 9758      | *         | *          |
+| Core Ultra 7 270K Plus | LGA1851 | 24    | 24      | 125   | 311.50 | 77.5%  | 10063     | *         | *          |
+| Core Ultra 5 250K Plus | LGA1851 | 18    | 18      | 125   | 219.99 | 73.3%  | 7413      | *         | *          |
+| Core Ultra 5 225       | LGA1851 | 10    | 10      | 65    | 178.55 | 62.5%  | 4149      | *         | *          |
+| Core i5-14400          | LGA1700 | 10    | 16      | 65    | 208.41 | 58.0%  | 3860      | *         | *          |
+
+// Gaming index points (9850X3D = 100) for each $100.
+GameValue  := (Gaming * 100 * ($100 / Price)).Decimal
+// Cinebench points for each $100.
+MultiValue := (MultiCore * ($100 / Price)).Decimal
+
+// The cards that reach the target, best value first.
+sheet Shortlist := Gpu |> filter(Fps1440 >= TargetFps) |> sort(Value1440, desc) |> select(Card, Vram, Price, Fps1440, Value1440)
+
+sheet Picks
+
+| Question                          | Answer                                                      |
+| --------------------------------- | ----------------------------------------------------------- |
+| Most 1440p frames per dollar      | = Gpu[; Value1440 == Gpu.Value1440.max()].Card              |
+| Most 4K frames per dollar         | = Gpu[; Value4K == Gpu.Value4K.max()].Card                  |
+| Best value reaching the target    | = Shortlist[Card; 0]                                        |
+| Most gaming CPU per dollar        | = Cpu[; GameValue == Cpu.GameValue.max()].Chip              |
+| Most multi-core CPU per dollar    | = Cpu[; MultiValue == Cpu.MultiValue.max()].Chip            |
+
+plot CpuGaming
+type: hbar
+data: Cpu |> sort(Gaming, desc) |> select(Chip, Gaming)
+title: CPU gaming performance at 1080p (9850X3D = 100%)
+labels: y
+width: 960
+height: 420
+
+plot CpuMultiCore
+type: hbar
+data: Cpu |> sort(MultiCore, desc) |> select(Chip, MultiCore)
+title: Cinebench 2026 multi-core score
+labels: y
+width: 960
+height: 420
+
+plot CpuGameValue
+type: hbar
+data: Cpu |> sort(GameValue, desc) |> select(Chip, GameValue)
+title: CPU gaming index points for each $100
+labels: y
+width: 960
+height: 420
+
+plot CpuMultiValue
+type: hbar
+data: Cpu |> sort(MultiValue, desc) |> select(Chip, MultiValue)
+title: Cinebench 2026 multi-core points for each $100
+labels: y
+width: 960
+height: 420
+
+plot GpuRaster
+type: hbar
+data: Gpu |> sort(Raster1440, desc) |> select(Card, Raster1080, Raster1440, Raster4K)
+title: GPU raster performance (RTX 5090 = 100%)
+labels: y
+width: 960
+height: 760
+
+plot GpuValue1440
+type: hbar
+data: Gpu |> sort(Value1440, desc) |> select(Card, Value1440)
+title: 1440p frames per second for each $100
+labels: y
+units: y
+width: 960
+height: 520
+
+plot GpuValue4K
+type: hbar
+data: Gpu |> sort(Value4K, desc) |> select(Card, Value4K)
+title: 4K frames per second for each $100
+labels: y
+units: y
+width: 960
+height: 520
+
+plot GpuMarkup
+type: hbar
+data: Gpu |> select(Card, Msrp, Price)
+title: List price against street price
+labels: y
+units: y
+width: 960
+height: 680
+
+plot GpuEfficiency
+type: hbar
+data: Gpu |> sort(PerJoule, desc) |> select(Card, PerJoule)
+title: 1440p pixels for each joule
+labels: y
+units: y
+width: 960
+height: 520
+
+plot GpuPrice
+type: scatter
+data: Gpu |> select(Price, Fps1440)
+title: 1440p frame rate against street price
+units: both
+ticks: both
+origin: both
+width: 960
+fit: straight
+
+plot CpuPrice
+type: scatter
+data: Cpu |> select(Price, Gaming)
+title: Gaming index against price
+units: x
+ticks: both
+width: 960
+fit: straight
+
+// The whole PC around the RX 9070 XT, the best value card that reaches the
+// target, and the Ryzen 7 7800X3D. US prices before tax, as found on
+// 27 November 2026, some of them Black Friday offers; Windows, keyboard and
+// mouse are not included. The processor and card are priced as above.
+// Board: tech-cortex.com. Cooler: microcenter.com. Power supply and case:
+// specpicks.com. RAM: bottleneckpc.com (16GiB), digitalcitizen.life (32GiB
+// and 64GiB). SSD: pcgamer.com and techradar.com (1TB), maxmybuild.com
+// (2TB), storagediskprices.com, September (4TB). Displays: amazon.com
+// listings via techspot.com, displayninja.com and pcguide.com.
+const Processor = 'Ryzen 7 7800X3D'
+const GraphicsCard = 'RX 9070 XT'
+
+sheet Machine
+
+Price : Currency[USD; $]
+
+| Part          | Item                               | Price                               |
+| ------------- | ---------------------------------- | ----------------------------------- |
+| Processor     | = Processor                        | = Cpu[; Chip == Processor].Price    |
+| Graphics card | = GraphicsCard                     | = Gpu[; Card == GraphicsCard].Price |
+| Motherboard   | MSI B850 Gaming Plus WiFi          | 282.04                              |
+| Cooler        | Thermalright Phantom Spirit 120 SE | 54.99                               |
+| Power supply  | Corsair RM850e, 850W               | 94.99                               |
+| Case          | Lian Li Lancool 216                | 99.99                               |
+
+sheet Ram
+
+Size  : Data[GiB]
+Price : Currency[USD; $]
+
+| Option   | Item                   | Size | Price  |
+| -------- | ---------------------- | ---- | ------ |
+| Entry    | DDR5-6000 CL30, 2x8GiB | 16   | 249.99 |
+| Standard | DDR5-6000, 2x16GiB     | 32   | 439    |
+| Large    | DDR5-6000, 2x32GiB     | 64   | 949    |
+
+sheet Disk
+
+Size  : Data[TB]
+Price : Currency[USD; $]
+PerTB : Quantity[USD.TB^-1; .0f]
+
+| Option   | Item                | Size | Price  | PerTB |
+| -------- | ------------------- | ---- | ------ | ----- |
+| Entry    | WD Black SN7100 1TB | 1    | 149    | *     |
+| Standard | WD Black SN7100 2TB | 2    | 299.46 | *     |
+| Large    | WD Black SN7100 4TB | 4    | 539.16 | *     |
+
+PerTB := Price / Size
+
+sheet Display
+
+Diagonal : Length[in]
+Refresh  : Frequency[Hz]
+Price    : Currency[USD; $]
+Fps      : Frequency[Hz; .0f]
+
+| Option  | Item                          | Diagonal | Resolution | Refresh | Price  | Fps |
+| ------- | ----------------------------- | -------- | ---------- | ------- | ------ | --- |
+| MiniLED | AOC Q27G3XMN                  | 27       | QHD        | 180     | 209.99 | *   |
+| OLED    | Acer Predator X27U W1 QD-OLED | 27       | QHD        | 240     | 269.99 | *   |
+| OLED4K  | ASUS ROG PG32UCDP OLED        | 32       | UHD        | 240     | 799    | *   |
+
+// The card's frame rate at the display's resolution: QHD is 1440p, UHD 4K.
+Fps := if Resolution == 'UHD' then Gpu[; Card == GraphicsCard].Fps4K else Gpu[; Card == GraphicsCard].Fps1440
+
+// Change an option here to price another build.
+sheet Builds
+
+Tower      : Currency[USD; $]
+ScreenCost : Currency[USD; $]
+Total      : Currency[USD; $]
+
+| Build       | Memory   | Storage  | Screen  | Tower | ScreenCost | Total |
+| ----------- | -------- | -------- | ------- | ----- | ---------- | ----- |
+| Budget      | Entry    | Entry    | MiniLED | *     | *          | *     |
+| Recommended | Standard | Standard | OLED    | *     | *          | *     |
+| High        | Large    | Large    | OLED4K  | *     | *          | *     |
+
+Tower      := Machine.Price.sum() + Ram[; Option == Memory].Price + Disk[; Option == Storage].Price
+ScreenCost := Display[; Option == Screen].Price
+Total      := Tower + ScreenCost
+
+plot BuildCost
+type: hstacked
+data: Builds |> select(Build, Tower, ScreenCost)
+title: Cost of each build
+labels: y
+units: y
+width: 960
+height: 360

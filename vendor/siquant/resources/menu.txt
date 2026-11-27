@@ -19,6 +19,17 @@ b | Data (bit)
 B | Data (byte)
 b.s^-1 | DataRate
 b.m^-2 | DataDensity
+bps | DataRate (bit per second)
+
+== Computing
+tok | Tokens
+tok.s^-1 | TokenRate
+flop | Flops
+FLOPS | FlopRate
+op | Operations
+OPS | OperationRate
+IOPS | OperationRate (I/O per second)
+px | Pixels
 
 == Angle
 rad | Angle (radian)
@@ -147,6 +158,7 @@ ly | Length (light year)
 pc | Length (parsec)
 lm | LuminousFlux (lumen)
 lx | Illuminance (lux)
+nit | Luminance (nit)
 Jy | SpectralFluxDensity (jansky)
 
 == Chemical

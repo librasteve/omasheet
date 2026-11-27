@@ -61,7 +61,7 @@ fn a_comment_may_stand_in_a_plot() {
 fn a_mistake_is_reported_at_its_line() {
     let e = errors(&format!("{SALES}\nplot Rev\ntype: radar\ndata: Sales\n"));
     assert_eq!(e.len(), 1, "{e:?}");
-    assert!(e[0].starts_with("`radar` is not a kind of plot | the types are line, bar, pie, candle, scatter, area, stacked, step, histogram, box, heatmap, waterfall, bubble, donut | radar"), "{e:?}");
+    assert!(e[0].starts_with("`radar` is not a kind of plot | the types are line, bar, pie, candle, scatter, area, stacked, step, histogram, box, heatmap, waterfall, bubble, donut, hbar, hstacked | radar"), "{e:?}");
 
     let e = errors(&format!("{SALES}\nplot Rev\ntype: line\ndata: Sales\ncolour: red\n"));
     assert!(e[0].contains("`colour` is not a control") && e[0].ends_with("| colour"), "{e:?}");
